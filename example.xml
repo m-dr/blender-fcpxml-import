@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.0">
+    <project>
+        <name>It Cant Happen Here Trailer (With Text)</name>
+        <children>
+            <sequence>
+                <name>Main Trailer Sequence</name>
+                <duration>1500</duration> <!-- 50 seconds at 30fps -->
+                <rate>
+                    <timebase>30</timebase>
+                </rate>
+                <media>
+                    <video>
+                        <format>
+                            <samplecharacteristics>
+                                <width>1920</width>
+                                <height>1080</height>
+                            </samplecharacteristics>
+                        </format>
+                    </video>
+                </media>
+                <!-- TRACK 1: VIDEO IMAGES (will be VSE Channel 1) -->
+                <track>
+                    <clipitem>
+                        <name>Intro_Bathroom</name>
+                        <start>0</start>
+                        <end>150</end>
+                        <file>
+                            <pathurl>images/intro_1768763744953.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Shad_Woodpile</name>
+                        <start>150</start>
+                        <end>240</end>
+                        <file>
+                            <pathurl>images/ACT1_S2_WOODPILE_1768763785919.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Shad_Onion</name>
+                        <start>240</start>
+                        <end>300</end>
+                        <file>
+                            <pathurl>images/TWN_02_DINER_SHAD_1768764405311.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Flag_Axes</name>
+                        <start>300</start>
+                        <end>450</end>
+                        <file>
+                            <pathurl>images/ACT2_S12_THE_FLAG_PG_1768772264625.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Shad_Taupe</name>
+                        <start>450</start>
+                        <end>600</end>
+                        <file>
+                            <pathurl>images/ISO_03_SHAD_VISIT_1768806017023.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Collab_Edit</name>
+                        <start>600</start>
+                        <end>750</end>
+                        <file>
+                            <pathurl>images/COLLAB_EDITOR_GAME_1768764713423.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prison_Tribunal</name>
+                        <start>750</start>
+                        <end>900</end>
+                        <file>
+                            <pathurl>images/PRISON_09_TRIBUNAL_1768771144555.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Fugitive_Child_Guard</name>
+                        <start>900</start>
+                        <end>1050</end>
+                        <file>
+                            <pathurl>images/FUGITIVE_01_BORDER_1768764813992.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Climax_Son_Gun</name>
+                        <start>1050</start>
+                        <end>1200</end>
+                        <file>
+                            <pathurl>images/FINALE_MARTYR_3_SHOOT_REVEAL_1768811154503.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Meta_Glitch</name>
+                        <start>1200</start>
+                        <end>1350</end>
+                        <file>
+                            <pathurl>images/END_META_1_GLITCH_1768811882582.jpg</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                    <clipitem>
+                        <name>Outro_Poster</name>
+                        <start>1350</start>
+                        <end>1500</end>
+                        <file>
+                            <pathurl>images/-1179397924_A_1930s_WPA-style_poster_in_the_stark_.png</pathurl>
+                            <media><video/></media>
+                        </file>
+                    </clipitem>
+                </track>
+                <!-- TRACK 2: VOICE-OVER TEXT (will be VSE Channel 2) -->
+                <track>
+                    <clipitem>
+                        <name>VO: Intro</name>
+                        <start>0</start>
+                        <end>150</end>
+                        <text>Wake up, Doremus! The coffee is hot, the birds are singing, and the populist demagogue is winning by a landslide!</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>VO: Shad</name>
+                        <start>150</start>
+                        <end>300</end>
+                        <text>Meet Shad. He hates you. He hates your books. And he eats raw onions like apples. Pure. Alpha. Energy.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>VO: Hellscape</name>
+                        <start>300</start>
+                        <end>450</end>
+                        <text>Watch your nice town turn into a claymation hellscape! Where dandelions are...</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>VO: Taupe</name>
+                        <start>450</start>
+                        <end>600</end>
+                        <text>(Shad's Voice) "Ideologically unsound. The new national color is TAUPE."
+TAUPE, baby! Fascism is beige!</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>VO: Collaborate</name>
+                        <start>600</start>
+                        <end>750</end>
+                        <text>COLLABORATE! Delete 'Liberty' from the Declaration of Independence! Enjoy gray food! Achieve perfect posture!</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>VO: Resist</name>
+                        <start>750</start>
+                        <end>900</end>
+                        <text>RESIST! Go to prison! Get lectured on 'Bourgeois Sighing' by a spider enthusiast! Freeze to death!</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>VO: Run</name>
+                        <start>900</start>
+                        <end>1050</end>
+                        <text>OR RUN! Get held up by a ten-year-old with a toy gun! And save democracy with... a tactical kazoo?</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>VO: Climax</name>
+                        <start>1050</start>
+                        <end>1350</end>
+                        <text>(Distorted) It’s a tragedy written as a comedy. It’s a tragedy... IT'S A TRAGEDY.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>VO: Outro</name>
+                        <start>1350</start>
+                        <end>1500</end>
+                        <text>Coming soon to a timeline near you. Remember: Maintain a positive emotional state!</text>
+                    </clipitem>
+                </track>
+                <!-- TRACK 3: IMAGE PROMPTS (will be VSE Channel 3) -->
+                <track>
+                    <clipitem>
+                        <name>Prompt: Intro</name>
+                        <start>0</start>
+                        <end>150</end>
+                        <text>Image Prompt: Static medium shot of Doremus Jessup in a 1930s Vermont bathroom, staring at his reflection. Nightmarish stop-motion claymation aesthetic, distorted wide-angle lens, sickly and desaturated color palette.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Shad Woodpile</name>
+                        <start>150</start>
+                        <end>240</end>
+                        <text>Image Prompt: A wide, static shot of a New England backyard. Shad Ledue leans on his axe. The composition emphasizes simmering class resentment.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Shad Onion</name>
+                        <start>240</start>
+                        <end>300</end>
+                        <text>Image Prompt: An extreme close-up of a half-eaten raw onion on a diner counter. Visceral and vaguely disgusting, conveying a mood of crude, ominous power.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Flag</name>
+                        <start>300</start>
+                        <end>450</end>
+                        <text>Image Prompt: A static medium shot of a post office flagpole. A strange symbol (a bundle of rods tied with an axe) has been added to the flag. Mood is one of quiet, unnoticed change.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Dandelion</name>
+                        <start>450</start>
+                        <end>600</end>
+                        <text>Image Prompt: Shad Ledue, in a crisp M.M. uniform, stands by a vase containing a single yellow dandelion. The scene is profoundly absurd, but not surreal.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Edit Declaration</name>
+                        <start>600</start>
+                        <end>750</end>
+                        <text>Image Prompt: A tight overhead shot of a historic document. A hand holds a red pen over the words 'Life, Liberty and the pursuit of Happiness.' Creates a sense of bureaucratic desecration of ideals.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Kangaroo Court</name>
+                        <start>750</start>
+                        <end>900</end>
+                        <text>Image Prompt: A kangaroo court in a grimy prison mess hall. Doremus is accused of 'insufficiently rhythmic breathing'. The madness has infected the victims, not just the oppressors.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Child Guard</name>
+                        <start>900</start>
+                        <end>1050</end>
+                        <text>Image Prompt: A desolate border crossing at night. A small boy in an M.M. cap looks into the car with an unnervingly serious expression. The mood is surreal and tense.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Son Shoots</name>
+                        <start>1050</start>
+                        <end>1200</end>
+                        <text>Image Prompt: A low-angle shot from the floor. Philip Jessup towers over the camera, holding a smoking gun with a steady hand. His face is cold, impassive, and utterly devoid of emotion.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Glitch</name>
+                        <start>1200</start>
+                        <end>1350</end>
+                        <text>Image Prompt: The scene of the Washington Monument is melting. A character is glitching, his face half-dissolved into digital noise. The sky is tearing apart to reveal a static-filled void.</text>
+                    </clipitem>
+                    <clipitem>
+                        <name>Prompt: Final Poster</name>
+                        <start>1350</start>
+                        <end>1500</end>
+                        <text>Image Prompt: A 1930s WPA-style poster. Title: "IT CAN'T HAPPEN HERE". One half idyllic Americana, the other a grim, stormy rally with uniformed Minute Men.</text>
+                    </clipitem>
+                </track>
+            </sequence>
+        </children>
+    </project>
+</fcpxml>
