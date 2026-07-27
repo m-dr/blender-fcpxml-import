@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": (2, 6, 0),
+    "version": (2, 7, 0),
     "blender": (3, 0, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
     "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving track structure, retiming, markers, video, audio, and text.",
@@ -72,11 +72,9 @@ class MediaResolver:
     def resolve_media_path(self, original_pathurl: str, clip_name: str = "") -> str:
         clean_path, filename = self.clean_url_path(original_pathurl)
         
-        # 1. Direct file check on clean_path
         if clean_path and os.path.isfile(clean_path):
             return clean_path
         
-        # 2. Add directory of clean_path to search paths if it exists
         if clean_path:
             clean_dir = os.path.dirname(clean_path)
             if clean_dir and os.path.exists(clean_dir) and clean_dir not in self.search_paths:
@@ -85,19 +83,16 @@ class MediaResolver:
                 if os.path.isfile(clean_path):
                     return clean_path
         
-        # 3. Match filename in file cache
         if filename:
             norm_fn = os.path.normcase(filename)
             if norm_fn in self.file_cache:
                 return self.file_cache[norm_fn]
         
-        # 4. Match clip_name in file cache
         if clip_name:
             norm_cn = os.path.normcase(clip_name)
             if norm_cn in self.file_cache:
                 return self.file_cache[norm_cn]
         
-        # 5. Substring / partial match
         if filename:
             norm_fn = os.path.normcase(filename)
             for name, full_path in self.file_cache.items():
@@ -146,7 +141,6 @@ class FCPXMLParser:
             width = int(w_text) if w_text and w_text.isdigit() else 1920
             height = int(h_text) if h_text and h_text.isdigit() else 1080
             
-            # Sequence markers directly under sequence
             seq_markers = []
             for m in sequence.findall("marker"):
                 name = m.findtext("name") or ""
@@ -161,7 +155,6 @@ class FCPXMLParser:
                         "out": int(out_f) if out_f and out_f.lstrip("-").isdigit() else -1
                     })
 
-            # Registry for reusable <file id="..."> elements
             file_registry = {}
             for f in sequence.findall(".//file"):
                 f_id = f.get("id")
@@ -180,21 +173,18 @@ class FCPXMLParser:
 
             tracks = []
 
-            # Parse video tracks
             video_tracks = sequence.findall(".//media/video/track")
             for t_idx, track in enumerate(video_tracks, start=1):
                 clips = FCPXMLParser._extract_xmeml_clips(track, "video", file_registry)
                 if clips:
                     tracks.append({"track_type": "video", "track_num": t_idx, "clips": clips})
 
-            # Parse audio tracks
             audio_tracks = sequence.findall(".//media/audio/track")
             for t_idx, track in enumerate(audio_tracks, start=1):
                 clips = FCPXMLParser._extract_xmeml_clips(track, "audio", file_registry)
                 if clips:
                     tracks.append({"track_type": "audio", "track_num": t_idx, "clips": clips})
 
-            # Fallback for generic tracks if media/video or media/audio not specified
             if not tracks:
                 generic_tracks = sequence.findall(".//track")
                 for t_idx, track in enumerate(generic_tracks, start=1):
@@ -229,34 +219,53 @@ class FCPXMLParser:
             text_content = None
             pathurl = ""
 
-            # Extract timeremap / retiming speed_factor
+            # --- Retiming: parse timeremap filter ---
+            # The 'speed' parameter is a percentage (e.g. 80 = 80% = 0.8x).
+            # The 'graphdict' keyframes map timeline frames -> source frames.
+            # speed = (src_end - src_start) / (tl_end - tl_start)
+            # Prefer the explicit 'speed' param; use graphdict as fallback.
             speed_factor = 1.0
             for filt in clip.findall("filter"):
                 eff = filt.find("effect")
-                if eff is not None and (eff.findtext("effectid") or "").lower() == "timeremap":
-                    for param in eff.findall("parameter"):
-                        pid = (param.findtext("parameterid") or "").lower()
-                        if pid == "speed":
-                            val = param.findtext("value")
-                            if val:
-                                try:
-                                    speed_factor = float(val) / 100.0
-                                except ValueError:
-                                    pass
+                if eff is None:
+                    continue
+                if (eff.findtext("effectid") or "").lower() != "timeremap":
+                    continue
+
+                constant_speed = None
+                graphdict_speed = None
+
+                for param in eff.findall("parameter"):
+                    pid = (param.findtext("parameterid") or "").lower()
+
+                    if pid == "speed":
+                        val = param.findtext("value")
+                        if val:
+                            try:
+                                pct = float(val)
+                                if pct != 0.0:
+                                    constant_speed = pct / 100.0
+                            except ValueError:
+                                pass
+
+                    elif pid == "graphdict":
                         kfs = param.findall("keyframe")
                         if len(kfs) >= 2:
-                            w0_str = kfs[0].findtext("when")
-                            w1_str = kfs[-1].findtext("when")
-                            v0_str = kfs[0].findtext("value")
-                            v1_str = kfs[-1].findtext("value")
-                            if w0_str and w1_str and v0_str and v1_str:
-                                try:
-                                    w0, w1 = float(w0_str), float(w1_str)
-                                    v0, v1 = float(v0_str), float(v1_str)
-                                    if (w1 - w0) > 0:
-                                        speed_factor = (v1 - v0) / (w1 - w0)
-                                except ValueError:
-                                    pass
+                            try:
+                                w0 = float(kfs[0].findtext("when") or "0")
+                                w1 = float(kfs[-1].findtext("when") or "0")
+                                v0 = float(kfs[0].findtext("value") or "0")
+                                v1 = float(kfs[-1].findtext("value") or "0")
+                                dt = w1 - w0
+                                if dt > 0:
+                                    graphdict_speed = (v1 - v0) / dt
+                            except ValueError:
+                                pass
+
+                if constant_speed is not None:
+                    speed_factor = constant_speed
+                elif graphdict_speed is not None:
+                    speed_factor = graphdict_speed
 
             text_node = clip.find("text")
             if text_node is not None:
@@ -426,7 +435,6 @@ class FCPXMLImporter:
         vse = context.scene.sequence_editor
         strips = getattr(vse, 'strips', getattr(vse, 'sequences', None))
         
-        # Import Timeline Markers
         for marker in sequence.get("markers", []):
             m_name = marker["name"] if (marker["name"] and marker["name"] != "None") else (marker["comment"] or "Marker")
             frame_pos = marker["in"]
@@ -435,7 +443,6 @@ class FCPXMLImporter:
         missing_files = []
         imported_clips_count = 0
 
-        # Separate clips into video, audio, and text
         video_clips = []
         audio_clips = []
         text_clips = []
@@ -451,7 +458,7 @@ class FCPXMLImporter:
                 elif c_type == "audio" or t_type == "audio":
                     audio_clips.append(clip)
 
-        # Deduplicate identical video clips (same file, start, in_frame, duration)
+        # Deduplicate video clips (same file, start, in_frame, duration)
         unique_video_clips = []
         seen_video = set()
         for clip in video_clips:
@@ -460,7 +467,10 @@ class FCPXMLImporter:
                 seen_video.add(key)
                 unique_video_clips.append(clip)
 
-        # Deduplicate identical audio clips (e.g. exploded stereo tracks A1/A2 from Premiere)
+        # Deduplicate audio clips.
+        # Premiere exports "exploded" stereo tracks: clipitem-2 (L) and clipitem-3 (R) both
+        # point to the same file. De-dupe by (file_path, start, in_frame, duration) so they
+        # collapse into one Blender sound strip (which handles stereo natively).
         unique_audio_clips = []
         seen_audio = set()
         for clip in audio_clips:
@@ -469,7 +479,7 @@ class FCPXMLImporter:
                 seen_audio.add(key)
                 unique_audio_clips.append(clip)
 
-        # Pair video & audio clips by matching file_path and start frame
+        # Pair video & audio by matching (file_path, start)
         clip_pairs = []
         audio_used = set()
 
@@ -483,16 +493,13 @@ class FCPXMLImporter:
                     break
             clip_pairs.append((v_clip, matching_a))
 
-        # Add remaining audio clips without matching video clip
         for idx, a_clip in enumerate(unique_audio_clips):
             if idx not in audio_used:
                 clip_pairs.append((None, a_clip))
 
-        # Import paired / individual clips
         for v_clip, a_clip in clip_pairs:
             created_mov = None
             created_snd = None
-            created_snd_spd = None
             created_spd = None
             
             target_strips = strips
@@ -502,90 +509,111 @@ class FCPXMLImporter:
                 meta = strips.new_meta(name=ref_clip["name"], channel=1, frame_start=ref_clip["start"])
                 target_strips = getattr(meta, 'strips', getattr(meta, 'sequences', None))
 
-            # 1. Import Audio Strip on Channel 1
+            # ------------------------------------------------------------------
+            # 1. Audio Strip on Channel 1
+            # Blender does NOT support SPEED effects on sound strips.
+            # Audio retiming is achieved by setting strip.pitch = speed_factor.
+            # pitch < 1.0  = slower playback (same as speed_factor < 1 in FCP)
+            # pitch_correction = True keeps the audible pitch at normal while
+            # adjusting playback rate — matches FCP "Time Remap" behaviour.
+            # ------------------------------------------------------------------
             if a_clip:
                 resolved_path = media_resolver.resolve_media_path(a_clip["file_path"], a_clip["name"])
                 if resolved_path and os.path.isfile(resolved_path):
+                    a_speed = a_clip.get("speed_factor", 1.0)
+                    a_timeline_dur = a_clip["duration"]
+                    a_in_frame = a_clip["in_frame"]
+
                     created_snd = target_strips.new_sound(
                         name=a_clip["name"],
                         filepath=resolved_path,
                         channel=1,
                         frame_start=a_clip["start"]
                     )
-                    created_snd.frame_offset_start = a_clip["in_frame"]
-                    
-                    if hasattr(created_snd, "right_handle"):
-                        created_snd.right_handle = a_clip["start"] + a_clip["duration"]
-                    else:
-                        created_snd.frame_final_duration = a_clip["duration"]
+                    created_snd.frame_offset_start = a_in_frame
 
-                    speed = a_clip.get("speed_factor", 1.0)
-                    if abs(speed - 1.0) > 0.001:
+                    if abs(a_speed - 1.0) > 0.001:
+                        created_snd.pitch = a_speed
                         created_snd.pitch_correction = True
-                        if create_speed_strips:
-                            created_snd_spd = target_strips.new_effect(
-                                name=a_clip["name"] + "_audio_speed",
-                                type="SPEED",
-                                channel=2,
-                                frame_start=a_clip["start"],
-                                length=a_clip["duration"],
-                                input1=created_snd
-                            )
-                            created_snd_spd.use_default_fade = False
-                            created_snd_spd.speed_factor = speed
+
+                    try:
+                        created_snd.frame_final_duration = a_timeline_dur
+                    except AttributeError:
+                        created_snd.frame_final_end = a_clip["start"] + a_timeline_dur
 
                     imported_clips_count += 1
                 else:
                     missing_files.append(a_clip["file_path"] or a_clip["name"])
 
-            # 2. Import Video Strip on Channel 2 or 3
-            a_speed_active = created_snd and abs(a_clip.get("speed_factor", 1.0) - 1.0) > 0.001 and create_speed_strips
-            mov_channel = 3 if a_speed_active else 2
-            
+            # ------------------------------------------------------------------
+            # 2. Video Strip on Channel 2; SPEED effect on Channel 3 if needed.
+            #
+            # When a SPEED strip is used:
+            #   - The raw movie strip must expose enough source frames.
+            #     At speed_factor 0.8 (80%), 4135 timeline frames consume only
+            #     3308 source frames (4135 * 0.8 ≈ 3308).  We set the movie
+            #     strip's frame_final_duration to source_frames_needed so it
+            #     isn't trimmed prematurely.
+            #   - The SPEED strip uses frame_end (absolute) rather than
+            #     length so its timeline extent precisely matches the clip.
+            # ------------------------------------------------------------------
             if v_clip:
                 resolved_path = media_resolver.resolve_media_path(v_clip["file_path"], v_clip["name"])
                 if resolved_path and os.path.isfile(resolved_path):
+                    v_speed = v_clip.get("speed_factor", 1.0)
+                    v_timeline_dur = v_clip["duration"]
+                    v_in_frame = v_clip["in_frame"]
+                    v_start = v_clip["start"]
+
+                    needs_speed = create_speed_strips and abs(v_speed - 1.0) > 0.001
+
                     created_mov = target_strips.new_movie(
                         name=v_clip["name"],
                         filepath=resolved_path,
-                        channel=mov_channel,
-                        frame_start=v_clip["start"]
+                        channel=2,
+                        frame_start=v_start
                     )
-                    created_mov.frame_offset_start = v_clip["in_frame"]
-                    
-                    if hasattr(created_mov, "right_handle"):
-                        created_mov.right_handle = v_clip["start"] + v_clip["duration"]
-                    else:
-                        created_mov.frame_final_duration = v_clip["duration"]
-                    
-                    speed = v_clip.get("speed_factor", 1.0)
-                    if create_speed_strips and abs(speed - 1.0) > 0.001:
+                    created_mov.frame_offset_start = v_in_frame
+
+                    if needs_speed:
+                        # Source frames the SPEED strip will actually read:
+                        # fewer frames are read for slow motion (speed_factor < 1)
+                        source_frames_needed = int(v_timeline_dur * v_speed) + 2
+                        try:
+                            created_mov.frame_final_duration = source_frames_needed
+                        except AttributeError:
+                            created_mov.frame_final_end = v_start + source_frames_needed
+
                         created_spd = target_strips.new_effect(
                             name=v_clip["name"] + "_speed",
                             type="SPEED",
-                            channel=mov_channel + 1,
-                            frame_start=v_clip["start"],
-                            length=v_clip["duration"],
+                            channel=3,
+                            frame_start=v_start,
+                            frame_end=v_start + v_timeline_dur,
                             input1=created_mov
                         )
                         created_spd.use_default_fade = False
-                        created_spd.speed_factor = speed
-                    
+                        created_spd.speed_factor = v_speed
+                    else:
+                        try:
+                            created_mov.frame_final_duration = v_timeline_dur
+                        except AttributeError:
+                            created_mov.frame_final_end = v_start + v_timeline_dur
+
                     imported_clips_count += 1
                 else:
                     missing_files.append(v_clip["file_path"] or v_clip["name"])
 
-            # Select associated video and audio strips together so moving one moves both
             if created_mov:
                 created_mov.select = True
             if created_snd:
                 created_snd.select = True
-            if created_snd_spd:
-                created_snd_spd.select = True
             if created_spd:
                 created_spd.select = True
 
-        # 3. Import Text Strips on Channel 4
+        # ------------------------------------------------------------------
+        # 3. Text Strips on Channel 4
+        # ------------------------------------------------------------------
         for clip in text_clips:
             strip = strips.new_effect(
                 name=clip["name"],
@@ -619,7 +647,7 @@ class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
     add_speed_strips: bpy.props.BoolProperty(
         name="Add Speed Control Strips",
         default=True,
-        description="Add SPEED effect strips on top of retimed video and audio clips so playback speed is actively retimed"
+        description="Add SPEED effect strips on top of retimed video clips so playback speed is actively retimed"
     )
     
     def execute(self, context):
