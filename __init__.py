@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": (2, 5, 0),
+    "version": (2, 6, 0),
     "blender": (3, 0, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
     "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving track structure, retiming, markers, video, audio, and text.",
@@ -492,6 +492,7 @@ class FCPXMLImporter:
         for v_clip, a_clip in clip_pairs:
             created_mov = None
             created_snd = None
+            created_snd_spd = None
             created_spd = None
             
             target_strips = strips
@@ -521,19 +522,33 @@ class FCPXMLImporter:
                     speed = a_clip.get("speed_factor", 1.0)
                     if abs(speed - 1.0) > 0.001:
                         created_snd.pitch_correction = True
+                        if create_speed_strips:
+                            created_snd_spd = target_strips.new_effect(
+                                name=a_clip["name"] + "_audio_speed",
+                                type="SPEED",
+                                channel=2,
+                                frame_start=a_clip["start"],
+                                length=a_clip["duration"],
+                                input1=created_snd
+                            )
+                            created_snd_spd.use_default_fade = False
+                            created_snd_spd.speed_factor = speed
 
                     imported_clips_count += 1
                 else:
                     missing_files.append(a_clip["file_path"] or a_clip["name"])
 
-            # 2. Import Video Strip on Channel 2
+            # 2. Import Video Strip on Channel 2 or 3
+            a_speed_active = created_snd and abs(a_clip.get("speed_factor", 1.0) - 1.0) > 0.001 and create_speed_strips
+            mov_channel = 3 if a_speed_active else 2
+            
             if v_clip:
                 resolved_path = media_resolver.resolve_media_path(v_clip["file_path"], v_clip["name"])
                 if resolved_path and os.path.isfile(resolved_path):
                     created_mov = target_strips.new_movie(
                         name=v_clip["name"],
                         filepath=resolved_path,
-                        channel=2,
+                        channel=mov_channel,
                         frame_start=v_clip["start"]
                     )
                     created_mov.frame_offset_start = v_clip["in_frame"]
@@ -548,7 +563,7 @@ class FCPXMLImporter:
                         created_spd = target_strips.new_effect(
                             name=v_clip["name"] + "_speed",
                             type="SPEED",
-                            channel=3,
+                            channel=mov_channel + 1,
                             frame_start=v_clip["start"],
                             length=v_clip["duration"],
                             input1=created_mov
@@ -565,15 +580,17 @@ class FCPXMLImporter:
                 created_mov.select = True
             if created_snd:
                 created_snd.select = True
+            if created_snd_spd:
+                created_snd_spd.select = True
             if created_spd:
                 created_spd.select = True
 
-        # 3. Import Text Strips on Channel 3
+        # 3. Import Text Strips on Channel 4
         for clip in text_clips:
             strip = strips.new_effect(
                 name=clip["name"],
                 type="TEXT",
-                channel=3,
+                channel=4,
                 frame_start=clip["start"],
                 length=clip["duration"]
             )
@@ -602,7 +619,7 @@ class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
     add_speed_strips: bpy.props.BoolProperty(
         name="Add Speed Control Strips",
         default=True,
-        description="Add a SPEED effect strip on top of retimed video clips so video playback is retimed"
+        description="Add SPEED effect strips on top of retimed video and audio clips so playback speed is actively retimed"
     )
     
     def execute(self, context):
