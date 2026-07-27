@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": "3.1.0",
+    "version": "3.2.0",
     "blender": (3, 0, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
     "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving multi-track structure, retiming, reverse playback, markers, video, audio, and text.",
@@ -234,29 +234,34 @@ class FCPXMLParser:
             for filt in clip.findall("filter"):
                 eff = filt.find("effect")
                 if eff is not None and (eff.findtext("effectid") or "").lower() == "timeremap":
+                    # Check for explicit reverse parameter
                     for param in eff.findall("parameter"):
                         pid = (param.findtext("parameterid") or "").lower()
-                        if pid == "speed":
+                        if pid == "reverse" and (param.findtext("value") or "").upper() == "TRUE":
+                            speed_factor = -1.0
+                        elif pid == "speed":
                             val = param.findtext("value")
                             if val:
                                 try:
-                                    speed_factor = float(val) / 100.0
+                                    s_val = float(val) / 100.0
+                                    speed_factor = -abs(s_val) if speed_factor < 0 else s_val
                                 except ValueError:
                                     pass
-                        kfs = param.findall("keyframe")
-                        if len(kfs) >= 2:
-                            w0_str = kfs[0].findtext("when")
-                            w1_str = kfs[-1].findtext("when")
-                            v0_str = kfs[0].findtext("value")
-                            v1_str = kfs[-1].findtext("value")
-                            if w0_str and w1_str and v0_str and v1_str:
-                                try:
-                                    w0, w1 = float(w0_str), float(w1_str)
-                                    v0, v1 = float(v0_str), float(v1_str)
-                                    if (w1 - w0) > 0:
-                                        speed_factor = (v1 - v0) / (w1 - w0)
-                                except ValueError:
-                                    pass
+                    # Keyframe calculation fallback
+                    kfs = param.findall("keyframe") if 'param' in locals() and param is not None else []
+                    if len(kfs) >= 2 and speed_factor == 1.0:
+                        w0_str = kfs[0].findtext("when")
+                        w1_str = kfs[-1].findtext("when")
+                        v0_str = kfs[0].findtext("value")
+                        v1_str = kfs[-1].findtext("value")
+                        if w0_str and w1_str and v0_str and v1_str:
+                            try:
+                                w0, w1 = float(w0_str), float(w1_str)
+                                v0, v1 = float(v0_str), float(v1_str)
+                                if (w1 - w0) > 0:
+                                    speed_factor = (v1 - v0) / (w1 - w0)
+                            except ValueError:
+                                pass
 
             text_node = clip.find("text")
             if text_node is not None:
@@ -411,13 +416,11 @@ class FCPXMLImporter:
 
     @staticmethod
     def apply_strip_retiming(strip: Any, start_frame: int, target_duration: int, speed_factor: float):
-        target_end = start_frame + target_duration
-        
-        # 1. Handle timeline bounds
-        if hasattr(strip, "right_handle"):
-            strip.right_handle = target_end
-        else:
+        # 1. Set strip duration on timeline so end frame matches XML start + duration
+        if hasattr(strip, "frame_final_duration"):
             strip.frame_final_duration = target_duration
+        elif hasattr(strip, "right_handle"):
+            strip.right_handle = start_frame + target_duration
 
         # 2. Reverse playback for negative speed
         if speed_factor < 0:
