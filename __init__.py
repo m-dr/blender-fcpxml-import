@@ -511,11 +511,10 @@ class FCPXMLImporter:
 
             # ------------------------------------------------------------------
             # 1. Audio Strip on Channel 1
-            # Blender does NOT support SPEED effects on sound strips.
-            # Audio retiming is achieved by setting strip.pitch = speed_factor.
-            # pitch < 1.0  = slower playback (same as speed_factor < 1 in FCP)
-            # pitch_correction = True keeps the audible pitch at normal while
-            # adjusting playback rate — matches FCP "Time Remap" behaviour.
+            # Blender has no SPEED effect for sound and no 'pitch' property on
+            # SoundStrip in Blender 5.x. Audio retiming is done by setting
+            # frame_final_duration = timeline_duration (Blender resamples the
+            # audio data to fit). pitch_correction=True preserves audible pitch.
             # ------------------------------------------------------------------
             if a_clip:
                 resolved_path = media_resolver.resolve_media_path(a_clip["file_path"], a_clip["name"])
@@ -533,7 +532,6 @@ class FCPXMLImporter:
                     created_snd.frame_offset_start = a_in_frame
 
                     if abs(a_speed - 1.0) > 0.001:
-                        created_snd.pitch = a_speed
                         created_snd.pitch_correction = True
 
                     try:
@@ -549,13 +547,14 @@ class FCPXMLImporter:
             # 2. Video Strip on Channel 2; SPEED effect on Channel 3 if needed.
             #
             # When a SPEED strip is used:
-            #   - The raw movie strip must expose enough source frames.
-            #     At speed_factor 0.8 (80%), 4135 timeline frames consume only
-            #     3308 source frames (4135 * 0.8 ≈ 3308).  We set the movie
-            #     strip's frame_final_duration to source_frames_needed so it
-            #     isn't trimmed prematurely.
-            #   - The SPEED strip uses frame_end (absolute) rather than
-            #     length so its timeline extent precisely matches the clip.
+            #   - The movie strip MUST be frame_final_duration = timeline_dur.
+            #     The SPEED strip length is capped to its input strip length,
+            #     so if the movie is shorter than tl_dur the SPEED strip will
+            #     also be shorter. At 0.8x speed 4135 tl frames consume 3308
+            #     source frames; Blender freezes the last source frame for the
+            #     remaining tl frames, but the SPEED strip ends at the right
+            #     spot so the freeze is never seen.
+            #   - new_effect uses 'length=' (not 'frame_end=') in Blender 5.x.
             # ------------------------------------------------------------------
             if v_clip:
                 resolved_path = media_resolver.resolve_media_path(v_clip["file_path"], v_clip["name"])
@@ -576,20 +575,19 @@ class FCPXMLImporter:
                     created_mov.frame_offset_start = v_in_frame
 
                     if needs_speed:
-                        # Source frames the SPEED strip will actually read:
-                        # fewer frames are read for slow motion (speed_factor < 1)
-                        source_frames_needed = int(v_timeline_dur * v_speed) + 2
+                        # Movie strip must be tl_dur long so SPEED strip can span it.
+                        # SPEED strip length is always capped to input strip length.
                         try:
-                            created_mov.frame_final_duration = source_frames_needed
+                            created_mov.frame_final_duration = v_timeline_dur
                         except AttributeError:
-                            created_mov.frame_final_end = v_start + source_frames_needed
+                            created_mov.frame_final_end = v_start + v_timeline_dur
 
                         created_spd = target_strips.new_effect(
                             name=v_clip["name"] + "_speed",
                             type="SPEED",
                             channel=3,
                             frame_start=v_start,
-                            frame_end=v_start + v_timeline_dur,
+                            length=v_timeline_dur,
                             input1=created_mov
                         )
                         created_spd.use_default_fade = False
