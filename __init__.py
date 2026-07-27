@@ -8,10 +8,10 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": (2, 2, 0),
+    "version": (2, 3, 0),
     "blender": (3, 0, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
-    "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving track structure, markers, video, audio, and text.",
+    "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving track structure, retiming, markers, video, audio, and text.",
     "warning": "",
     "category": "Sequencer",
     "support": "COMMUNITY",
@@ -229,6 +229,35 @@ class FCPXMLParser:
             text_content = None
             pathurl = ""
 
+            # Extract timeremap / retiming speed_factor
+            speed_factor = 1.0
+            for filt in clip.findall("filter"):
+                eff = filt.find("effect")
+                if eff is not None and (eff.findtext("effectid") or "").lower() == "timeremap":
+                    for param in eff.findall("parameter"):
+                        pid = (param.findtext("parameterid") or "").lower()
+                        if pid == "speed":
+                            val = param.findtext("value")
+                            if val:
+                                try:
+                                    speed_factor = float(val) / 100.0
+                                except ValueError:
+                                    pass
+                        kfs = param.findall("keyframe")
+                        if len(kfs) >= 2:
+                            w0_str = kfs[0].findtext("when")
+                            w1_str = kfs[-1].findtext("when")
+                            v0_str = kfs[0].findtext("value")
+                            v1_str = kfs[-1].findtext("value")
+                            if w0_str and w1_str and v0_str and v1_str:
+                                try:
+                                    w0, w1 = float(w0_str), float(w1_str)
+                                    v0, v1 = float(v0_str), float(v1_str)
+                                    if (w1 - w0) > 0:
+                                        speed_factor = (v1 - v0) / (w1 - w0)
+                                except ValueError:
+                                    pass
+
             text_node = clip.find("text")
             if text_node is not None:
                 clip_type = "text"
@@ -265,6 +294,7 @@ class FCPXMLParser:
                 "in_frame": in_frame,
                 "out_frame": out_frame,
                 "duration": dur_clip,
+                "speed_factor": speed_factor,
                 "file_path": pathurl,
                 "text_content": text_content,
                 "markers": clip_markers
@@ -331,6 +361,7 @@ class FCPXMLParser:
                         "in_frame": 0,
                         "out_frame": 30,
                         "duration": 30,
+                        "speed_factor": 1.0,
                         "file_path": pathurl,
                         "text_content": child.get("name"),
                         "markers": []
@@ -377,7 +408,7 @@ class FCPXMLImporter:
             scene.sequence_editor_create()
 
     @staticmethod
-    def import_sequence(context, sequence: Dict[str, Any], media_resolver: MediaResolver) -> Tuple[List[str], int]:
+    def import_sequence(context, sequence: Dict[str, Any], media_resolver: MediaResolver, create_meta_strips: bool = False) -> Tuple[List[str], int]:
         FCPXMLImporter.configure_scene(
             context,
             sequence['width'],
@@ -432,44 +463,96 @@ class FCPXMLImporter:
                 seen_audio.add(key)
                 unique_audio_clips.append(clip)
 
-        # Layout in Blender VSE:
-        # Channel 1: Audio strip(s) (SOUND)
-        # Channel 2: Video strip(s) (MOVIE)
-        # Channel 3+: Text / Overlay strips (TEXT)
+        # Pair video & audio clips by matching file_path and start frame
+        clip_pairs = []
+        audio_used = set()
 
-        # 1. Import Audio Strips on Channel 1
-        for clip in unique_audio_clips:
-            resolved_path = media_resolver.resolve_media_path(clip["file_path"], clip["name"])
-            if resolved_path and os.path.isfile(resolved_path):
-                strip = strips.new_sound(
-                    name=clip["name"],
-                    filepath=resolved_path,
-                    channel=1,
-                    frame_start=clip["start"]
-                )
-                strip.frame_offset_start = clip["in_frame"]
-                strip.frame_final_duration = clip["duration"]
-                imported_clips_count += 1
-            else:
-                missing_files.append(clip["file_path"] or clip["name"])
+        for v_clip in unique_video_clips:
+            v_key = (v_clip.get("file_path"), v_clip.get("start"))
+            matching_a = None
+            for idx, a_clip in enumerate(unique_audio_clips):
+                if idx not in audio_used and (a_clip.get("file_path"), a_clip.get("start")) == v_key:
+                    matching_a = a_clip
+                    audio_used.add(idx)
+                    break
+            clip_pairs.append((v_clip, matching_a))
 
-        # 2. Import Video Strips on Channel 2
-        for clip in unique_video_clips:
-            resolved_path = media_resolver.resolve_media_path(clip["file_path"], clip["name"])
-            if resolved_path and os.path.isfile(resolved_path):
-                strip = strips.new_movie(
-                    name=clip["name"],
-                    filepath=resolved_path,
-                    channel=2,
-                    frame_start=clip["start"]
-                )
-                strip.frame_offset_start = clip["in_frame"]
-                strip.frame_final_duration = clip["duration"]
-                imported_clips_count += 1
-            else:
-                missing_files.append(clip["file_path"] or clip["name"])
+        # Add remaining audio clips without matching video clip
+        for idx, a_clip in enumerate(unique_audio_clips):
+            if idx not in audio_used:
+                clip_pairs.append((None, a_clip))
 
-        # 3. Import Text Strips on Channel 3
+        # Import paired / individual clips
+        for v_clip, a_clip in clip_pairs:
+            created_mov = None
+            created_snd = None
+            created_spd = None
+            
+            # Target strips collection (meta strip if option enabled)
+            target_strips = strips
+            ref_clip = v_clip or a_clip
+            
+            if create_meta_strips and ref_clip:
+                meta = strips.new_meta(name=ref_clip["name"], channel=1, frame_start=ref_clip["start"])
+                target_strips = getattr(meta, 'strips', getattr(meta, 'sequences', None))
+
+            # 1. Import Audio
+            if a_clip:
+                resolved_path = media_resolver.resolve_media_path(a_clip["file_path"], a_clip["name"])
+                if resolved_path and os.path.isfile(resolved_path):
+                    created_snd = target_strips.new_sound(
+                        name=a_clip["name"],
+                        filepath=resolved_path,
+                        channel=1,
+                        frame_start=a_clip["start"]
+                    )
+                    created_snd.frame_offset_start = a_clip["in_frame"]
+                    created_snd.frame_final_duration = a_clip["duration"]
+                    speed = a_clip.get("speed_factor", 1.0)
+                    if abs(speed - 1.0) > 0.001:
+                        created_snd.pitch_correction = True
+                    imported_clips_count += 1
+                else:
+                    missing_files.append(a_clip["file_path"] or a_clip["name"])
+
+            # 2. Import Video
+            if v_clip:
+                resolved_path = media_resolver.resolve_media_path(v_clip["file_path"], v_clip["name"])
+                if resolved_path and os.path.isfile(resolved_path):
+                    created_mov = target_strips.new_movie(
+                        name=v_clip["name"],
+                        filepath=resolved_path,
+                        channel=2,
+                        frame_start=v_clip["start"]
+                    )
+                    created_mov.frame_offset_start = v_clip["in_frame"]
+                    created_mov.frame_final_duration = v_clip["duration"]
+                    
+                    speed = v_clip.get("speed_factor", 1.0)
+                    if abs(speed - 1.0) > 0.001:
+                        created_spd = target_strips.new_effect(
+                            name=v_clip["name"] + "_speed",
+                            type="SPEED",
+                            channel=3,
+                            frame_start=v_clip["start"],
+                            length=v_clip["duration"],
+                            input1=created_mov
+                        )
+                        created_spd.use_default_fade = False
+                        created_spd.speed_factor = speed
+                    
+                    imported_clips_count += 1
+                else:
+                    missing_files.append(v_clip["file_path"] or v_clip["name"])
+
+            # Link / Select associated strips together
+            if created_mov and created_snd:
+                created_mov.select = True
+                created_snd.select = True
+                if created_spd:
+                    created_spd.select = True
+
+        # 3. Import Text Strips
         for clip in text_clips:
             strip = strips.new_effect(
                 name=clip["name"],
@@ -485,7 +568,7 @@ class FCPXMLImporter:
         return missing_files, imported_clips_count
 
 class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
-    """Import FCPXML & XMEML files preserving video, audio, text, and markers"""
+    """Import FCPXML & XMEML files preserving video, audio, text, retiming, and markers"""
     bl_idname = "sequencer.import_fcpxml"
     bl_label = "Import FCPXML / XMEML"
     
@@ -494,6 +577,11 @@ class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
         name="Search Folder",
         description="Optional folder to search for missing media files",
         subtype='DIR_PATH'
+    )
+    group_meta: bpy.props.BoolProperty(
+        name="Pack into Meta Strips",
+        default=False,
+        description="Pack corresponding video and audio strips into Meta Strips so they move together as one"
     )
     
     def execute(self, context):
@@ -513,7 +601,9 @@ class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
         total_clips = 0
         
         for sequence in sequences:
-            missing, count = FCPXMLImporter.import_sequence(context, sequence, media_resolver)
+            missing, count = FCPXMLImporter.import_sequence(
+                context, sequence, media_resolver, create_meta_strips=self.group_meta
+            )
             missing_files.extend(missing)
             total_clips += count
             
