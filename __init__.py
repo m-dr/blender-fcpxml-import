@@ -8,10 +8,10 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": (2, 8, 0),
+    "version": "3.1.0",
     "blender": (3, 0, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
-    "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving multi-track structure, individual clip retiming, markers, video, audio, and text.",
+    "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving multi-track structure, retiming, reverse playback, markers, video, audio, and text.",
     "warning": "",
     "category": "Sequencer",
     "support": "COMMUNITY",
@@ -410,6 +410,26 @@ class FCPXMLImporter:
             scene.sequence_editor_create()
 
     @staticmethod
+    def apply_strip_retiming(strip: Any, start_frame: int, target_duration: int, speed_factor: float):
+        target_end = start_frame + target_duration
+        
+        # 1. Handle timeline bounds
+        if hasattr(strip, "right_handle"):
+            strip.right_handle = target_end
+        else:
+            strip.frame_final_duration = target_duration
+
+        # 2. Reverse playback for negative speed
+        if speed_factor < 0:
+            if hasattr(strip, "use_reverse_frames"):
+                strip.use_reverse_frames = True
+
+        # 3. Audio pitch correction
+        if abs(abs(speed_factor) - 1.0) > 0.001:
+            if hasattr(strip, "pitch_correction") and getattr(strip, "type", "") == "SOUND":
+                strip.pitch_correction = True
+
+    @staticmethod
     def import_sequence(
         context,
         sequence: Dict[str, Any],
@@ -473,7 +493,7 @@ class FCPXMLImporter:
 
         base_video_channel = max(audio_t_count, 1)
 
-        # Deduplicate identical video clips (same file, start, in_frame, duration)
+        # Deduplicate identical video clips (same file, start, in_frame, duration, track_num)
         unique_video_clips = []
         seen_video = set()
         for clip in video_clips:
@@ -514,7 +534,6 @@ class FCPXMLImporter:
         for v_clip, a_clip in clip_pairs:
             created_mov = None
             created_snd = None
-            created_spd = None
             
             target_strips = strips
             ref_clip = v_clip or a_clip
@@ -538,23 +557,12 @@ class FCPXMLImporter:
                     )
                     created_snd.frame_offset_start = a_clip["in_frame"]
                     
-                    target_duration = a_clip["duration"]
-                    target_end = a_clip["start"] + target_duration
-                    
-                    speed = a_clip.get("speed_factor", 1.0)
-                    if abs(speed - 1.0) > 0.001:
-                        created_snd.pitch_correction = True
-                        if hasattr(created_snd, "retiming_keys"):
-                            created_snd.retiming_keys.add(timeline_frame=a_clip["start"])
-                            created_snd.retiming_keys.add(timeline_frame=created_snd.right_handle)
-                            if len(created_snd.retiming_keys) >= 2:
-                                created_snd.retiming_keys[1].timeline_frame = target_end
-                            created_snd.right_handle = target_end
-                    else:
-                        if hasattr(created_snd, "right_handle"):
-                            created_snd.right_handle = target_end
-                        else:
-                            created_snd.frame_final_duration = target_duration
+                    FCPXMLImporter.apply_strip_retiming(
+                        created_snd,
+                        a_clip["start"],
+                        a_clip["duration"],
+                        a_clip.get("speed_factor", 1.0)
+                    )
 
                     imported_clips_count += 1
                 else:
@@ -575,33 +583,12 @@ class FCPXMLImporter:
                     )
                     created_mov.frame_offset_start = v_clip["in_frame"]
                     
-                    target_duration = v_clip["duration"]
-                    target_end = v_clip["start"] + target_duration
-
-                    speed = v_clip.get("speed_factor", 1.0)
-                    if abs(speed - 1.0) > 0.001:
-                        if hasattr(created_mov, "retiming_keys"):
-                            created_mov.retiming_keys.add(timeline_frame=v_clip["start"])
-                            created_mov.retiming_keys.add(timeline_frame=created_mov.right_handle)
-                            if len(created_mov.retiming_keys) >= 2:
-                                created_mov.retiming_keys[1].timeline_frame = target_end
-                            created_mov.right_handle = target_end
-                        elif create_speed_strips:
-                            created_spd = target_strips.new_effect(
-                                name=v_clip["name"] + "_speed",
-                                type="SPEED",
-                                channel=mov_channel + 1,
-                                frame_start=v_clip["start"],
-                                length=v_clip["duration"],
-                                input1=created_mov
-                            )
-                            created_spd.use_default_fade = False
-                            created_spd.speed_factor = speed
-                    else:
-                        if hasattr(created_mov, "right_handle"):
-                            created_mov.right_handle = target_end
-                        else:
-                            created_mov.frame_final_duration = target_duration
+                    FCPXMLImporter.apply_strip_retiming(
+                        created_mov,
+                        v_clip["start"],
+                        v_clip["duration"],
+                        v_clip.get("speed_factor", 1.0)
+                    )
                     
                     imported_clips_count += 1
                 else:
@@ -612,8 +599,6 @@ class FCPXMLImporter:
                 created_mov.select = True
             if created_snd:
                 created_snd.select = True
-            if created_spd:
-                created_spd.select = True
 
         # 3. Import Text Strips
         for clip in text_clips:
@@ -632,7 +617,7 @@ class FCPXMLImporter:
         return missing_files, imported_clips_count
 
 class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
-    """Import FCPXML & XMEML files preserving multi-track structure, individual clip retiming, markers, video, audio, and text"""
+    """Import FCPXML & XMEML files preserving multi-track structure, retiming, reverse playback, markers, video, audio, and text"""
     bl_idname = "sequencer.import_fcpxml"
     bl_label = "Import FCPXML / XMEML"
     
