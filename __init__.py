@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": (1, 1, 0),
+    "version": (2, 7, 0),
     "blender": (3, 0, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
     "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving track structure, retiming, markers, video, audio, and text.",
@@ -72,9 +72,11 @@ class MediaResolver:
     def resolve_media_path(self, original_pathurl: str, clip_name: str = "") -> str:
         clean_path, filename = self.clean_url_path(original_pathurl)
         
+        # 1. Direct file check on clean_path
         if clean_path and os.path.isfile(clean_path):
             return clean_path
         
+        # 2. Add directory of clean_path to search paths if it exists
         if clean_path:
             clean_dir = os.path.dirname(clean_path)
             if clean_dir and os.path.exists(clean_dir) and clean_dir not in self.search_paths:
@@ -83,16 +85,19 @@ class MediaResolver:
                 if os.path.isfile(clean_path):
                     return clean_path
         
+        # 3. Match filename in file cache
         if filename:
             norm_fn = os.path.normcase(filename)
             if norm_fn in self.file_cache:
                 return self.file_cache[norm_fn]
         
+        # 4. Match clip_name in file cache
         if clip_name:
             norm_cn = os.path.normcase(clip_name)
             if norm_cn in self.file_cache:
                 return self.file_cache[norm_cn]
         
+        # 5. Substring / partial match
         if filename:
             norm_fn = os.path.normcase(filename)
             for name, full_path in self.file_cache.items():
@@ -141,6 +146,7 @@ class FCPXMLParser:
             width = int(w_text) if w_text and w_text.isdigit() else 1920
             height = int(h_text) if h_text and h_text.isdigit() else 1080
             
+            # Sequence markers directly under sequence
             seq_markers = []
             for m in sequence.findall("marker"):
                 name = m.findtext("name") or ""
@@ -155,6 +161,7 @@ class FCPXMLParser:
                         "out": int(out_f) if out_f and out_f.lstrip("-").isdigit() else -1
                     })
 
+            # Registry for reusable <file id="..."> elements
             file_registry = {}
             for f in sequence.findall(".//file"):
                 f_id = f.get("id")
@@ -173,18 +180,21 @@ class FCPXMLParser:
 
             tracks = []
 
+            # Parse video tracks
             video_tracks = sequence.findall(".//media/video/track")
             for t_idx, track in enumerate(video_tracks, start=1):
                 clips = FCPXMLParser._extract_xmeml_clips(track, "video", file_registry)
                 if clips:
                     tracks.append({"track_type": "video", "track_num": t_idx, "clips": clips})
 
+            # Parse audio tracks
             audio_tracks = sequence.findall(".//media/audio/track")
             for t_idx, track in enumerate(audio_tracks, start=1):
                 clips = FCPXMLParser._extract_xmeml_clips(track, "audio", file_registry)
                 if clips:
                     tracks.append({"track_type": "audio", "track_num": t_idx, "clips": clips})
 
+            # Fallback for generic tracks if media/video or media/audio not specified
             if not tracks:
                 generic_tracks = sequence.findall(".//track")
                 for t_idx, track in enumerate(generic_tracks, start=1):
@@ -219,53 +229,34 @@ class FCPXMLParser:
             text_content = None
             pathurl = ""
 
-            # --- Retiming: parse timeremap filter ---
-            # The 'speed' parameter is a percentage (e.g. 80 = 80% = 0.8x).
-            # The 'graphdict' keyframes map timeline frames -> source frames.
-            # speed = (src_end - src_start) / (tl_end - tl_start)
-            # Prefer the explicit 'speed' param; use graphdict as fallback.
+            # Extract timeremap / retiming speed_factor
             speed_factor = 1.0
             for filt in clip.findall("filter"):
                 eff = filt.find("effect")
-                if eff is None:
-                    continue
-                if (eff.findtext("effectid") or "").lower() != "timeremap":
-                    continue
-
-                constant_speed = None
-                graphdict_speed = None
-
-                for param in eff.findall("parameter"):
-                    pid = (param.findtext("parameterid") or "").lower()
-
-                    if pid == "speed":
-                        val = param.findtext("value")
-                        if val:
-                            try:
-                                pct = float(val)
-                                if pct != 0.0:
-                                    constant_speed = pct / 100.0
-                            except ValueError:
-                                pass
-
-                    elif pid == "graphdict":
+                if eff is not None and (eff.findtext("effectid") or "").lower() == "timeremap":
+                    for param in eff.findall("parameter"):
+                        pid = (param.findtext("parameterid") or "").lower()
+                        if pid == "speed":
+                            val = param.findtext("value")
+                            if val:
+                                try:
+                                    speed_factor = float(val) / 100.0
+                                except ValueError:
+                                    pass
                         kfs = param.findall("keyframe")
                         if len(kfs) >= 2:
-                            try:
-                                w0 = float(kfs[0].findtext("when") or "0")
-                                w1 = float(kfs[-1].findtext("when") or "0")
-                                v0 = float(kfs[0].findtext("value") or "0")
-                                v1 = float(kfs[-1].findtext("value") or "0")
-                                dt = w1 - w0
-                                if dt > 0:
-                                    graphdict_speed = (v1 - v0) / dt
-                            except ValueError:
-                                pass
-
-                if constant_speed is not None:
-                    speed_factor = constant_speed
-                elif graphdict_speed is not None:
-                    speed_factor = graphdict_speed
+                            w0_str = kfs[0].findtext("when")
+                            w1_str = kfs[-1].findtext("when")
+                            v0_str = kfs[0].findtext("value")
+                            v1_str = kfs[-1].findtext("value")
+                            if w0_str and w1_str and v0_str and v1_str:
+                                try:
+                                    w0, w1 = float(w0_str), float(w1_str)
+                                    v0, v1 = float(v0_str), float(v1_str)
+                                    if (w1 - w0) > 0:
+                                        speed_factor = (v1 - v0) / (w1 - w0)
+                                except ValueError:
+                                    pass
 
             text_node = clip.find("text")
             if text_node is not None:
@@ -419,11 +410,11 @@ class FCPXMLImporter:
     @staticmethod
     def import_sequence(
         context,
-        sequence,
-        media_resolver,
-        create_meta_strips=False,
-        create_speed_strips=True
-    ):
+        sequence: Dict[str, Any],
+        media_resolver: MediaResolver,
+        create_meta_strips: bool = False,
+        create_speed_strips: bool = False
+    ) -> Tuple[List[str], int]:
         FCPXMLImporter.configure_scene(
             context,
             sequence['width'],
@@ -431,192 +422,185 @@ class FCPXMLImporter:
             sequence['fps'],
             sequence['duration']
         )
-
+        
         vse = context.scene.sequence_editor
         strips = getattr(vse, 'strips', getattr(vse, 'sequences', None))
-
-        # Import timeline markers
+        
+        # Import Timeline Markers
         for marker in sequence.get("markers", []):
             m_name = marker["name"] if (marker["name"] and marker["name"] != "None") else (marker["comment"] or "Marker")
-            context.scene.timeline_markers.new(name=m_name, frame=marker["in"])
+            frame_pos = marker["in"]
+            context.scene.timeline_markers.new(name=m_name, frame=frame_pos)
 
         missing_files = []
         imported_clips_count = 0
 
-        # ----------------------------------------------------------------
-        # Channel layout
-        # ----------------------------------------------------------------
-        # Blender VSE channels are numbered from the bottom (ch 1 = lowest).
-        # We map NLE tracks to channels as follows:
-        #
-        #   Audio track 1  → ch 1
-        #   Audio track 2  → ch 2  ...  Audio track N → ch N
-        #   Video track 1  → ch N+1 ... Video track M → ch N+M
-        #   SPEED effects  → ch N+M+1 .. N+M+M  (one band, one per video track)
-        #   Text strips    → ch N+M+M+1
-        #
-        # For SLOW MOTION (speed_factor < 1): Blender's retiming_keys Python
-        # API cannot place a key beyond content_duration, so a SPEED effect
-        # strip on the band above the video tracks is used. The underlying
-        # movie strip is MUTED so only the SPEED strip renders.
-        #
-        # For FAST MOTION / SPEED-UP (speed_factor > 1): native retiming_keys
-        # on a single strip — no extra effect strip needed.
-        # ----------------------------------------------------------------
+        # Separate clips into video, audio, and text
+        video_clips = []
+        audio_clips = []
+        text_clips = []
 
-        tracks = sequence.get("tracks", [])
-        audio_tracks = [t for t in tracks if t.get("track_type") == "audio"]
-        video_tracks = [t for t in tracks if t.get("track_type") == "video"]
-        n_audio = len(audio_tracks)
-        n_video = len(video_tracks)
-
-        # track_num → Blender channel
-        audio_ch_map = {}
-        for i, t in enumerate(audio_tracks):
-            audio_ch_map[t.get("track_num", i + 1)] = i + 1
-
-        video_ch_map = {}
-        for i, t in enumerate(video_tracks):
-            video_ch_map[t.get("track_num", i + 1)] = n_audio + i + 1
-
-        # Ordered list of video track_nums so we can index into the SPEED band
-        video_track_nums = [t.get("track_num", i + 1) for i, t in enumerate(video_tracks)]
-        speed_ch_base = n_audio + n_video  # first SPEED ch = speed_ch_base + 1 + track_index
-
-        text_channel = n_audio + n_video * 2 + 1
-
-        # ----------------------------------------------------------------
-        # Audio tracks
-        # ----------------------------------------------------------------
-        seen_audio = set()
-        for track in audio_tracks:
-            t_num = track.get("track_num", 1)
-            a_ch = audio_ch_map.get(t_num, 1)
-
+        for track in sequence.get("tracks", []):
+            t_type = track.get("track_type", "video")
             for clip in track.get("clips", []):
-                if clip.get("type") == "text":
-                    continue
-                # Deduplicate exploded stereo (Premiere exports L/R as separate clipitems
-                # pointing to the same file; Blender sound strips handle stereo natively)
-                dedup_key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"))
-                if dedup_key in seen_audio:
-                    continue
-                seen_audio.add(dedup_key)
+                c_type = clip.get("type", t_type)
+                if c_type == "text":
+                    text_clips.append(clip)
+                elif c_type == "video" or t_type == "video":
+                    video_clips.append(clip)
+                elif c_type == "audio" or t_type == "audio":
+                    audio_clips.append(clip)
 
-                resolved = media_resolver.resolve_media_path(clip["file_path"], clip["name"])
-                if not (resolved and os.path.isfile(resolved)):
-                    missing_files.append(clip["file_path"] or clip["name"])
-                    continue
-
-                a_speed = clip.get("speed_factor", 1.0)
-                a_dur = clip["duration"]
-
-                snd = strips.new_sound(
-                    name=clip["name"],
-                    filepath=resolved,
-                    channel=a_ch,
-                    frame_start=clip["start"]
-                )
-                snd.frame_offset_start = clip["in_frame"]
-                # Stretch/compress to timeline duration; Blender resamples the audio.
-                # pitch_correction=True keeps audible pitch at normal despite rate change.
-                snd.frame_final_duration = a_dur
-                if abs(a_speed - 1.0) > 0.001:
-                    snd.pitch_correction = True
-                snd.select = True
-                imported_clips_count += 1
-
-        # ----------------------------------------------------------------
-        # Video tracks
-        # ----------------------------------------------------------------
+        # Deduplicate identical video clips (same file, start, in_frame, duration)
+        unique_video_clips = []
         seen_video = set()
-        for track in video_tracks:
-            t_num = track.get("track_num", 1)
-            v_ch = video_ch_map.get(t_num, n_audio + 1)
-            try:
-                track_index = video_track_nums.index(t_num)
-            except ValueError:
-                track_index = 0
-            spd_ch = speed_ch_base + track_index + 1
+        for clip in video_clips:
+            key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"))
+            if key not in seen_video:
+                seen_video.add(key)
+                unique_video_clips.append(clip)
 
-            for clip in track.get("clips", []):
-                if clip.get("type") == "text":
-                    continue
+        # Deduplicate identical audio clips (e.g. exploded stereo tracks A1/A2 from Premiere)
+        unique_audio_clips = []
+        seen_audio = set()
+        for clip in audio_clips:
+            key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"))
+            if key not in seen_audio:
+                seen_audio.add(key)
+                unique_audio_clips.append(clip)
 
-                dedup_key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"))
-                if dedup_key in seen_video:
-                    continue
-                seen_video.add(dedup_key)
+        # Pair video & audio clips by matching file_path and start frame
+        clip_pairs = []
+        audio_used = set()
 
-                resolved = media_resolver.resolve_media_path(clip["file_path"], clip["name"])
-                if not (resolved and os.path.isfile(resolved)):
-                    missing_files.append(clip["file_path"] or clip["name"])
-                    continue
+        for v_clip in unique_video_clips:
+            v_key = (v_clip.get("file_path"), v_clip.get("start"))
+            matching_a = None
+            for idx, a_clip in enumerate(unique_audio_clips):
+                if idx not in audio_used and (a_clip.get("file_path"), a_clip.get("start")) == v_key:
+                    matching_a = a_clip
+                    audio_used.add(idx)
+                    break
+            clip_pairs.append((v_clip, matching_a))
 
-                v_speed = clip.get("speed_factor", 1.0)
-                v_dur = clip["duration"]
-                v_start = clip["start"]
-                needs_speed = create_speed_strips and abs(v_speed - 1.0) > 0.001
-                is_slow_mo = v_speed < 1.0 - 0.001
+        # Add remaining audio clips without matching video clip
+        for idx, a_clip in enumerate(unique_audio_clips):
+            if idx not in audio_used:
+                clip_pairs.append((None, a_clip))
 
-                mov = strips.new_movie(
-                    name=clip["name"],
-                    filepath=resolved,
-                    channel=v_ch,
-                    frame_start=v_start
-                )
-                mov.frame_offset_start = clip["in_frame"]
+        # Import paired / individual clips
+        for v_clip, a_clip in clip_pairs:
+            created_mov = None
+            created_snd = None
+            created_spd = None
+            
+            target_strips = strips
+            ref_clip = v_clip or a_clip
+            
+            if create_meta_strips and ref_clip:
+                meta = strips.new_meta(name=ref_clip["name"], channel=1, frame_start=ref_clip["start"])
+                target_strips = getattr(meta, 'strips', getattr(meta, 'sequences', None))
 
-                if needs_speed and is_slow_mo:
-                    # Slow motion: retiming_keys can't go past content_duration in Python,
-                    # so use a SPEED effect strip. Base movie is muted; only SPEED renders.
-                    mov.frame_final_duration = v_dur
-                    mov.mute = True
-
-                    spd = strips.new_effect(
-                        name=clip["name"] + "_speed",
-                        type="SPEED",
-                        channel=spd_ch,
-                        frame_start=v_start,
-                        length=v_dur,
-                        input1=mov
+            # 1. Import Audio Strip on Channel 1
+            if a_clip:
+                resolved_path = media_resolver.resolve_media_path(a_clip["file_path"], a_clip["name"])
+                if resolved_path and os.path.isfile(resolved_path):
+                    created_snd = target_strips.new_sound(
+                        name=a_clip["name"],
+                        filepath=resolved_path,
+                        channel=1,
+                        frame_start=a_clip["start"]
                     )
-                    spd.use_default_fade = False
-                    spd.speed_factor = v_speed
-                    spd.select = True
+                    created_snd.frame_offset_start = a_clip["in_frame"]
+                    
+                    target_duration = a_clip["duration"]
+                    target_end = a_clip["start"] + target_duration
+                    
+                    speed = a_clip.get("speed_factor", 1.0)
+                    if abs(speed - 1.0) > 0.001:
+                        created_snd.pitch_correction = True
+                        if hasattr(created_snd, "retiming_keys"):
+                            created_snd.retiming_keys.add(timeline_frame=a_clip["start"])
+                            created_snd.retiming_keys.add(timeline_frame=created_snd.right_handle)
+                            if len(created_snd.retiming_keys) >= 2:
+                                created_snd.retiming_keys[1].timeline_frame = target_end
+                            created_snd.right_handle = target_end
+                    else:
+                        if hasattr(created_snd, "right_handle"):
+                            created_snd.right_handle = target_end
+                        else:
+                            created_snd.frame_final_duration = target_duration
 
-                elif needs_speed and not is_slow_mo:
-                    # Fast motion: single strip with native retiming_keys.
-                    mov.frame_final_duration = v_dur
-                    mov.retiming_keys.add(timeline_frame=v_start)
-                    mov.retiming_keys.add(timeline_frame=v_start + v_dur)
-
+                    imported_clips_count += 1
                 else:
-                    mov.frame_final_duration = v_dur
+                    missing_files.append(a_clip["file_path"] or a_clip["name"])
 
-                mov.select = True
-                imported_clips_count += 1
+            # 2. Import Video Strip on Channel 2
+            if v_clip:
+                resolved_path = media_resolver.resolve_media_path(v_clip["file_path"], v_clip["name"])
+                if resolved_path and os.path.isfile(resolved_path):
+                    created_mov = target_strips.new_movie(
+                        name=v_clip["name"],
+                        filepath=resolved_path,
+                        channel=2,
+                        frame_start=v_clip["start"]
+                    )
+                    created_mov.frame_offset_start = v_clip["in_frame"]
+                    
+                    target_duration = v_clip["duration"]
+                    target_end = v_clip["start"] + target_duration
 
-        # ----------------------------------------------------------------
-        # Text strips
-        # ----------------------------------------------------------------
-        for track in tracks:
-            for clip in track.get("clips", []):
-                if clip.get("type") != "text":
-                    continue
-                strip = strips.new_effect(
-                    name=clip["name"],
-                    type="TEXT",
-                    channel=text_channel,
-                    frame_start=clip["start"],
-                    length=clip["duration"]
-                )
-                strip.text = clip["text_content"] or clip["name"]
-                strip.font_size = 30
-                imported_clips_count += 1
+                    speed = v_clip.get("speed_factor", 1.0)
+                    if abs(speed - 1.0) > 0.001:
+                        if hasattr(created_mov, "retiming_keys"):
+                            created_mov.retiming_keys.add(timeline_frame=v_clip["start"])
+                            created_mov.retiming_keys.add(timeline_frame=created_mov.right_handle)
+                            if len(created_mov.retiming_keys) >= 2:
+                                created_mov.retiming_keys[1].timeline_frame = target_end
+                            created_mov.right_handle = target_end
+                        elif create_speed_strips:
+                            created_spd = target_strips.new_effect(
+                                name=v_clip["name"] + "_speed",
+                                type="SPEED",
+                                channel=3,
+                                frame_start=v_clip["start"],
+                                length=v_clip["duration"],
+                                input1=created_mov
+                            )
+                            created_spd.use_default_fade = False
+                            created_spd.speed_factor = speed
+                    else:
+                        if hasattr(created_mov, "right_handle"):
+                            created_mov.right_handle = target_end
+                        else:
+                            created_mov.frame_final_duration = target_duration
+                    
+                    imported_clips_count += 1
+                else:
+                    missing_files.append(v_clip["file_path"] or v_clip["name"])
+
+            # Select associated video and audio strips together so moving one moves both
+            if created_mov:
+                created_mov.select = True
+            if created_snd:
+                created_snd.select = True
+            if created_spd:
+                created_spd.select = True
+
+        # 3. Import Text Strips on Channel 3
+        for clip in text_clips:
+            strip = strips.new_effect(
+                name=clip["name"],
+                type="TEXT",
+                channel=3,
+                frame_start=clip["start"],
+                length=clip["duration"]
+            )
+            strip.text = clip["text_content"] or clip["name"]
+            strip.font_size = 30
+            imported_clips_count += 1
 
         return missing_files, imported_clips_count
-
 
 class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
     """Import FCPXML & XMEML files preserving video, audio, text, retiming, and markers"""
@@ -633,11 +617,6 @@ class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
         name="Pack into Meta Strips",
         default=False,
         description="Pack corresponding video and audio strips into Meta Strips so they move together as one"
-    )
-    add_speed_strips: bpy.props.BoolProperty(
-        name="Add Speed Control Strips",
-        default=True,
-        description="Add SPEED effect strips on top of retimed video clips so playback speed is actively retimed"
     )
     
     def execute(self, context):
@@ -662,7 +641,7 @@ class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
                 sequence,
                 media_resolver,
                 create_meta_strips=self.group_meta,
-                create_speed_strips=self.add_speed_strips
+                create_speed_strips=False
             )
             missing_files.extend(missing)
             total_clips += count
