@@ -8,10 +8,10 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": (2, 7, 0),
+    "version": (2, 8, 0),
     "blender": (3, 0, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
-    "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving track structure, retiming, markers, video, audio, and text.",
+    "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving multi-track structure, individual clip retiming, markers, video, audio, and text.",
     "warning": "",
     "category": "Sequencer",
     "support": "COMMUNITY",
@@ -183,14 +183,14 @@ class FCPXMLParser:
             # Parse video tracks
             video_tracks = sequence.findall(".//media/video/track")
             for t_idx, track in enumerate(video_tracks, start=1):
-                clips = FCPXMLParser._extract_xmeml_clips(track, "video", file_registry)
+                clips = FCPXMLParser._extract_xmeml_clips(track, "video", file_registry, t_idx)
                 if clips:
                     tracks.append({"track_type": "video", "track_num": t_idx, "clips": clips})
 
             # Parse audio tracks
             audio_tracks = sequence.findall(".//media/audio/track")
             for t_idx, track in enumerate(audio_tracks, start=1):
-                clips = FCPXMLParser._extract_xmeml_clips(track, "audio", file_registry)
+                clips = FCPXMLParser._extract_xmeml_clips(track, "audio", file_registry, t_idx)
                 if clips:
                     tracks.append({"track_type": "audio", "track_num": t_idx, "clips": clips})
 
@@ -198,7 +198,7 @@ class FCPXMLParser:
             if not tracks:
                 generic_tracks = sequence.findall(".//track")
                 for t_idx, track in enumerate(generic_tracks, start=1):
-                    clips = FCPXMLParser._extract_xmeml_clips(track, "video", file_registry)
+                    clips = FCPXMLParser._extract_xmeml_clips(track, "video", file_registry, t_idx)
                     if clips:
                         tracks.append({"track_type": "video", "track_num": t_idx, "clips": clips})
 
@@ -215,7 +215,7 @@ class FCPXMLParser:
         return sequences
 
     @staticmethod
-    def _extract_xmeml_clips(track: ET.Element, default_media_type: str, file_registry: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _extract_xmeml_clips(track: ET.Element, default_media_type: str, file_registry: Dict[str, Dict[str, Any]], track_num: int = 1) -> List[Dict[str, Any]]:
         clips = []
         for clip in track.findall("clipitem"):
             clip_name = clip.findtext("name") or "Unnamed Clip"
@@ -229,7 +229,7 @@ class FCPXMLParser:
             text_content = None
             pathurl = ""
 
-            # Extract timeremap / retiming speed_factor
+            # Extract timeremap / retiming speed_factor per clip
             speed_factor = 1.0
             for filt in clip.findall("filter"):
                 eff = filt.find("effect")
@@ -297,6 +297,7 @@ class FCPXMLParser:
                 "speed_factor": speed_factor,
                 "file_path": pathurl,
                 "text_content": text_content,
+                "track_num": track_num,
                 "markers": clip_markers
             })
         return clips
@@ -339,7 +340,7 @@ class FCPXMLParser:
             spine = seq.find("spine")
             if spine is not None:
                 clips = []
-                for child in spine:
+                for idx, child in enumerate(spine, start=1):
                     tag_name = child.tag
                     c_name = child.get("name") or "Clip"
                     ref = child.get("ref")
@@ -364,6 +365,7 @@ class FCPXMLParser:
                         "speed_factor": 1.0,
                         "file_path": pathurl,
                         "text_content": child.get("name"),
+                        "track_num": 1,
                         "markers": []
                     })
                 if clips:
@@ -451,20 +453,40 @@ class FCPXMLImporter:
                 elif c_type == "audio" or t_type == "audio":
                     audio_clips.append(clip)
 
+        # Map tracks to dynamic channels
+        audio_track_map = {}
+        video_track_map = {}
+        audio_t_count = 0
+        video_t_count = 0
+
+        for clip in audio_clips:
+            t_num = clip.get("track_num", 1)
+            if t_num not in audio_track_map:
+                audio_t_count += 1
+                audio_track_map[t_num] = audio_t_count
+
+        for clip in video_clips:
+            t_num = clip.get("track_num", 1)
+            if t_num not in video_track_map:
+                video_t_count += 1
+                video_track_map[t_num] = video_t_count
+
+        base_video_channel = max(audio_t_count, 1)
+
         # Deduplicate identical video clips (same file, start, in_frame, duration)
         unique_video_clips = []
         seen_video = set()
         for clip in video_clips:
-            key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"))
+            key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"), clip.get("track_num"))
             if key not in seen_video:
                 seen_video.add(key)
                 unique_video_clips.append(clip)
 
-        # Deduplicate identical audio clips (e.g. exploded stereo tracks A1/A2 from Premiere)
+        # Deduplicate identical audio clips
         unique_audio_clips = []
         seen_audio = set()
         for clip in audio_clips:
-            key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"))
+            key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"), clip.get("track_num"))
             if key not in seen_audio:
                 seen_audio.add(key)
                 unique_audio_clips.append(clip)
@@ -501,14 +523,17 @@ class FCPXMLImporter:
                 meta = strips.new_meta(name=ref_clip["name"], channel=1, frame_start=ref_clip["start"])
                 target_strips = getattr(meta, 'strips', getattr(meta, 'sequences', None))
 
-            # 1. Import Audio Strip on Channel 1
+            # 1. Import Audio Strip
             if a_clip:
                 resolved_path = media_resolver.resolve_media_path(a_clip["file_path"], a_clip["name"])
                 if resolved_path and os.path.isfile(resolved_path):
+                    a_t_num = a_clip.get("track_num", 1)
+                    snd_channel = audio_track_map.get(a_t_num, 1)
+
                     created_snd = target_strips.new_sound(
                         name=a_clip["name"],
                         filepath=resolved_path,
-                        channel=1,
+                        channel=snd_channel,
                         frame_start=a_clip["start"]
                     )
                     created_snd.frame_offset_start = a_clip["in_frame"]
@@ -535,14 +560,17 @@ class FCPXMLImporter:
                 else:
                     missing_files.append(a_clip["file_path"] or a_clip["name"])
 
-            # 2. Import Video Strip on Channel 2
+            # 2. Import Video Strip
             if v_clip:
                 resolved_path = media_resolver.resolve_media_path(v_clip["file_path"], v_clip["name"])
                 if resolved_path and os.path.isfile(resolved_path):
+                    v_t_num = v_clip.get("track_num", 1)
+                    mov_channel = base_video_channel + video_track_map.get(v_t_num, 1)
+
                     created_mov = target_strips.new_movie(
                         name=v_clip["name"],
                         filepath=resolved_path,
-                        channel=2,
+                        channel=mov_channel,
                         frame_start=v_clip["start"]
                     )
                     created_mov.frame_offset_start = v_clip["in_frame"]
@@ -562,7 +590,7 @@ class FCPXMLImporter:
                             created_spd = target_strips.new_effect(
                                 name=v_clip["name"] + "_speed",
                                 type="SPEED",
-                                channel=3,
+                                channel=mov_channel + 1,
                                 frame_start=v_clip["start"],
                                 length=v_clip["duration"],
                                 input1=created_mov
@@ -587,12 +615,13 @@ class FCPXMLImporter:
             if created_spd:
                 created_spd.select = True
 
-        # 3. Import Text Strips on Channel 3
+        # 3. Import Text Strips
         for clip in text_clips:
+            text_channel = base_video_channel + video_t_count + 1
             strip = strips.new_effect(
                 name=clip["name"],
                 type="TEXT",
-                channel=3,
+                channel=text_channel,
                 frame_start=clip["start"],
                 length=clip["duration"]
             )
@@ -603,7 +632,7 @@ class FCPXMLImporter:
         return missing_files, imported_clips_count
 
 class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
-    """Import FCPXML & XMEML files preserving video, audio, text, retiming, and markers"""
+    """Import FCPXML & XMEML files preserving multi-track structure, individual clip retiming, markers, video, audio, and text"""
     bl_idname = "sequencer.import_fcpxml"
     bl_label = "Import FCPXML / XMEML"
     
