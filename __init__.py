@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": (2, 4, 0),
+    "version": (2, 5, 0),
     "blender": (3, 0, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
     "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving track structure, retiming, markers, video, audio, and text.",
@@ -413,7 +413,7 @@ class FCPXMLImporter:
         sequence: Dict[str, Any],
         media_resolver: MediaResolver,
         create_meta_strips: bool = False,
-        create_speed_strips: bool = False
+        create_speed_strips: bool = True
     ) -> Tuple[List[str], int]:
         FCPXMLImporter.configure_scene(
             context,
@@ -513,7 +513,6 @@ class FCPXMLImporter:
                     )
                     created_snd.frame_offset_start = a_clip["in_frame"]
                     
-                    # Native VSE handle extension for duration
                     if hasattr(created_snd, "right_handle"):
                         created_snd.right_handle = a_clip["start"] + a_clip["duration"]
                     else:
@@ -539,7 +538,6 @@ class FCPXMLImporter:
                     )
                     created_mov.frame_offset_start = v_clip["in_frame"]
                     
-                    # Native VSE handle extension for duration
                     if hasattr(created_mov, "right_handle"):
                         created_mov.right_handle = v_clip["start"] + v_clip["duration"]
                     else:
@@ -602,9 +600,9 @@ class SEQUENCER_OT_import_fcpxml(bpy.types.Operator):
         description="Pack corresponding video and audio strips into Meta Strips so they move together as one"
     )
     add_speed_strips: bpy.props.BoolProperty(
-        name="Add Separate Speed Control Strips",
-        default=False,
-        description="Add an extra SPEED effect strip on top of retimed video strips (off by default for clean 2-strip layout)"
+        name="Add Speed Control Strips",
+        default=True,
+        description="Add a SPEED effect strip on top of retimed video clips so video playback is retimed"
     )
     
     def execute(self, context):
