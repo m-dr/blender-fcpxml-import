@@ -8,8 +8,8 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": "3.2.0",
-    "blender": (3, 0, 0),
+    "version": (1, 2, 0),
+    "blender": (5, 2, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
     "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving multi-track structure, retiming, reverse playback, markers, video, audio, and text.",
     "warning": "",
@@ -72,11 +72,9 @@ class MediaResolver:
     def resolve_media_path(self, original_pathurl: str, clip_name: str = "") -> str:
         clean_path, filename = self.clean_url_path(original_pathurl)
         
-        # 1. Direct file check on clean_path
         if clean_path and os.path.isfile(clean_path):
             return clean_path
         
-        # 2. Add directory of clean_path to search paths if it exists
         if clean_path:
             clean_dir = os.path.dirname(clean_path)
             if clean_dir and os.path.exists(clean_dir) and clean_dir not in self.search_paths:
@@ -85,19 +83,16 @@ class MediaResolver:
                 if os.path.isfile(clean_path):
                     return clean_path
         
-        # 3. Match filename in file cache
         if filename:
             norm_fn = os.path.normcase(filename)
             if norm_fn in self.file_cache:
                 return self.file_cache[norm_fn]
         
-        # 4. Match clip_name in file cache
         if clip_name:
             norm_cn = os.path.normcase(clip_name)
             if norm_cn in self.file_cache:
                 return self.file_cache[norm_cn]
         
-        # 5. Substring / partial match
         if filename:
             norm_fn = os.path.normcase(filename)
             for name, full_path in self.file_cache.items():
@@ -146,7 +141,6 @@ class FCPXMLParser:
             width = int(w_text) if w_text and w_text.isdigit() else 1920
             height = int(h_text) if h_text and h_text.isdigit() else 1080
             
-            # Sequence markers directly under sequence
             seq_markers = []
             for m in sequence.findall("marker"):
                 name = m.findtext("name") or ""
@@ -161,7 +155,6 @@ class FCPXMLParser:
                         "out": int(out_f) if out_f and out_f.lstrip("-").isdigit() else -1
                     })
 
-            # Registry for reusable <file id="..."> elements
             file_registry = {}
             for f in sequence.findall(".//file"):
                 f_id = f.get("id")
@@ -180,21 +173,18 @@ class FCPXMLParser:
 
             tracks = []
 
-            # Parse video tracks
             video_tracks = sequence.findall(".//media/video/track")
             for t_idx, track in enumerate(video_tracks, start=1):
                 clips = FCPXMLParser._extract_xmeml_clips(track, "video", file_registry, t_idx)
                 if clips:
                     tracks.append({"track_type": "video", "track_num": t_idx, "clips": clips})
 
-            # Parse audio tracks
             audio_tracks = sequence.findall(".//media/audio/track")
             for t_idx, track in enumerate(audio_tracks, start=1):
                 clips = FCPXMLParser._extract_xmeml_clips(track, "audio", file_registry, t_idx)
                 if clips:
                     tracks.append({"track_type": "audio", "track_num": t_idx, "clips": clips})
 
-            # Fallback for generic tracks if media/video or media/audio not specified
             if not tracks:
                 generic_tracks = sequence.findall(".//track")
                 for t_idx, track in enumerate(generic_tracks, start=1):
@@ -229,16 +219,14 @@ class FCPXMLParser:
             text_content = None
             pathurl = ""
 
-            # Extract timeremap / retiming speed_factor per clip
             speed_factor = 1.0
             for filt in clip.findall("filter"):
                 eff = filt.find("effect")
                 if eff is not None and (eff.findtext("effectid") or "").lower() == "timeremap":
-                    # Check for explicit reverse parameter
                     for param in eff.findall("parameter"):
                         pid = (param.findtext("parameterid") or "").lower()
                         if pid == "reverse" and (param.findtext("value") or "").upper() == "TRUE":
-                            speed_factor = -1.0
+                            speed_factor = -abs(speed_factor)
                         elif pid == "speed":
                             val = param.findtext("value")
                             if val:
@@ -247,21 +235,6 @@ class FCPXMLParser:
                                     speed_factor = -abs(s_val) if speed_factor < 0 else s_val
                                 except ValueError:
                                     pass
-                    # Keyframe calculation fallback
-                    kfs = param.findall("keyframe") if 'param' in locals() and param is not None else []
-                    if len(kfs) >= 2 and speed_factor == 1.0:
-                        w0_str = kfs[0].findtext("when")
-                        w1_str = kfs[-1].findtext("when")
-                        v0_str = kfs[0].findtext("value")
-                        v1_str = kfs[-1].findtext("value")
-                        if w0_str and w1_str and v0_str and v1_str:
-                            try:
-                                w0, w1 = float(w0_str), float(w1_str)
-                                v0, v1 = float(v0_str), float(v1_str)
-                                if (w1 - w0) > 0:
-                                    speed_factor = (v1 - v0) / (w1 - w0)
-                            except ValueError:
-                                pass
 
             text_node = clip.find("text")
             if text_node is not None:
@@ -291,6 +264,14 @@ class FCPXMLParser:
                         "out": int(cout) if cout and cout.lstrip("-").isdigit() else -1
                     })
 
+            file_duration = 0
+            if text_node is None:
+                file_elem = clip.find("file")
+                if file_elem is not None:
+                    fid2 = file_elem.get("id")
+                    if fid2 and fid2 in file_registry:
+                        file_duration = file_registry[fid2].get("duration", 0)
+
             clips.append({
                 "type": clip_type,
                 "name": clip_name,
@@ -303,7 +284,8 @@ class FCPXMLParser:
                 "file_path": pathurl,
                 "text_content": text_content,
                 "track_num": track_num,
-                "markers": clip_markers
+                "markers": clip_markers,
+                "file_duration": file_duration
             })
         return clips
 
@@ -415,24 +397,6 @@ class FCPXMLImporter:
             scene.sequence_editor_create()
 
     @staticmethod
-    def apply_strip_retiming(strip: Any, start_frame: int, target_duration: int, speed_factor: float):
-        # 1. Set strip duration on timeline so end frame matches XML start + duration
-        if hasattr(strip, "frame_final_duration"):
-            strip.frame_final_duration = target_duration
-        elif hasattr(strip, "right_handle"):
-            strip.right_handle = start_frame + target_duration
-
-        # 2. Reverse playback for negative speed
-        if speed_factor < 0:
-            if hasattr(strip, "use_reverse_frames"):
-                strip.use_reverse_frames = True
-
-        # 3. Audio pitch correction
-        if abs(abs(speed_factor) - 1.0) > 0.001:
-            if hasattr(strip, "pitch_correction") and getattr(strip, "type", "") == "SOUND":
-                strip.pitch_correction = True
-
-    @staticmethod
     def import_sequence(
         context,
         sequence: Dict[str, Any],
@@ -447,175 +411,144 @@ class FCPXMLImporter:
             sequence['fps'],
             sequence['duration']
         )
-        
+
         vse = context.scene.sequence_editor
         strips = getattr(vse, 'strips', getattr(vse, 'sequences', None))
-        
-        # Import Timeline Markers
+
         for marker in sequence.get("markers", []):
             m_name = marker["name"] if (marker["name"] and marker["name"] != "None") else (marker["comment"] or "Marker")
-            frame_pos = marker["in"]
-            context.scene.timeline_markers.new(name=m_name, frame=frame_pos)
+            context.scene.timeline_markers.new(name=m_name, frame=marker["in"])
 
         missing_files = []
         imported_clips_count = 0
 
-        # Separate clips into video, audio, and text
-        video_clips = []
-        audio_clips = []
-        text_clips = []
+        tracks = sequence.get("tracks", [])
+        audio_tracks = [t for t in tracks if t.get("track_type") == "audio"]
+        video_tracks = [t for t in tracks if t.get("track_type") == "video"]
+        n_audio = max(len(audio_tracks), 1)
+        n_video = max(len(video_tracks), 1)
 
-        for track in sequence.get("tracks", []):
-            t_type = track.get("track_type", "video")
+        audio_ch_map: Dict[int, int] = {}
+        for i, t in enumerate(audio_tracks):
+            audio_ch_map[t.get("track_num", i + 1)] = i + 1
+
+        video_ch_map: Dict[int, int] = {}
+        for i, t in enumerate(video_tracks):
+            video_ch_map[t.get("track_num", i + 1)] = n_audio + i + 1
+
+        text_channel = n_audio + n_video + 1
+
+        seen_audio: set = set()
+        for track in audio_tracks:
+            t_num = track.get("track_num", 1)
+            a_ch = audio_ch_map.get(t_num, 1)
+
             for clip in track.get("clips", []):
-                c_type = clip.get("type", t_type)
-                if c_type == "text":
-                    text_clips.append(clip)
-                elif c_type == "video" or t_type == "video":
-                    video_clips.append(clip)
-                elif c_type == "audio" or t_type == "audio":
-                    audio_clips.append(clip)
+                if clip.get("type") == "text":
+                    continue
 
-        # Map tracks to dynamic channels
-        audio_track_map = {}
-        video_track_map = {}
-        audio_t_count = 0
-        video_t_count = 0
+                dedup_key = (clip.get("file_path"), clip.get("start"),
+                             clip.get("in_frame"), clip.get("duration"))
+                if dedup_key in seen_audio:
+                    continue
+                seen_audio.add(dedup_key)
 
-        for clip in audio_clips:
-            t_num = clip.get("track_num", 1)
-            if t_num not in audio_track_map:
-                audio_t_count += 1
-                audio_track_map[t_num] = audio_t_count
+                resolved = media_resolver.resolve_media_path(clip["file_path"], clip["name"])
+                if not (resolved and os.path.isfile(resolved)):
+                    missing_files.append(clip["file_path"] or clip["name"])
+                    continue
 
-        for clip in video_clips:
-            t_num = clip.get("track_num", 1)
-            if t_num not in video_track_map:
-                video_t_count += 1
-                video_track_map[t_num] = video_t_count
+                speed = clip.get("speed_factor", 1.0)
+                tl_dur = clip["duration"]
+                c_start = clip["start"]
+                c_in = clip["in_frame"]
 
-        base_video_channel = max(audio_t_count, 1)
+                snd = strips.new_sound(
+                    name=clip["name"],
+                    filepath=resolved,
+                    channel=a_ch,
+                    frame_start=c_start
+                )
 
-        # Deduplicate identical video clips (same file, start, in_frame, duration, track_num)
-        unique_video_clips = []
-        seen_video = set()
-        for clip in video_clips:
-            key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"), clip.get("track_num"))
-            if key not in seen_video:
-                seen_video.add(key)
-                unique_video_clips.append(clip)
+                c_out = clip.get("out_frame", -1)
+                source_dur = clip.get("file_duration", 0)
 
-        # Deduplicate identical audio clips
-        unique_audio_clips = []
-        seen_audio = set()
-        for clip in audio_clips:
-            key = (clip.get("file_path"), clip.get("start"), clip.get("in_frame"), clip.get("duration"), clip.get("track_num"))
-            if key not in seen_audio:
-                seen_audio.add(key)
-                unique_audio_clips.append(clip)
+                snd.content_trim_start = c_in
+                snd.frame_start = c_start
+                if c_out > c_in and source_dur > 0:
+                    snd.content_trim_end = max(0, source_dur - c_out)
 
-        # Pair video & audio clips by matching file_path and start frame
-        clip_pairs = []
-        audio_used = set()
+                snd.frame_final_duration = tl_dur
 
-        for v_clip in unique_video_clips:
-            v_key = (v_clip.get("file_path"), v_clip.get("start"))
-            matching_a = None
-            for idx, a_clip in enumerate(unique_audio_clips):
-                if idx not in audio_used and (a_clip.get("file_path"), a_clip.get("start")) == v_key:
-                    matching_a = a_clip
-                    audio_used.add(idx)
-                    break
-            clip_pairs.append((v_clip, matching_a))
+                if abs(abs(speed) - 1.0) > 0.001:
+                    if hasattr(snd, "pitch_correction"):
+                        snd.pitch_correction = True
+                snd.select = True
+                imported_clips_count += 1
 
-        # Add remaining audio clips without matching video clip
-        for idx, a_clip in enumerate(unique_audio_clips):
-            if idx not in audio_used:
-                clip_pairs.append((None, a_clip))
+        seen_video: set = set()
+        for track in video_tracks:
+            t_num = track.get("track_num", 1)
+            v_ch = video_ch_map.get(t_num, n_audio + 1)
 
-        # Import paired / individual clips
-        for v_clip, a_clip in clip_pairs:
-            created_mov = None
-            created_snd = None
-            
-            target_strips = strips
-            ref_clip = v_clip or a_clip
-            
-            if create_meta_strips and ref_clip:
-                meta = strips.new_meta(name=ref_clip["name"], channel=1, frame_start=ref_clip["start"])
-                target_strips = getattr(meta, 'strips', getattr(meta, 'sequences', None))
+            for clip in track.get("clips", []):
+                if clip.get("type") == "text":
+                    continue
 
-            # 1. Import Audio Strip
-            if a_clip:
-                resolved_path = media_resolver.resolve_media_path(a_clip["file_path"], a_clip["name"])
-                if resolved_path and os.path.isfile(resolved_path):
-                    a_t_num = a_clip.get("track_num", 1)
-                    snd_channel = audio_track_map.get(a_t_num, 1)
+                dedup_key = (clip.get("file_path"), clip.get("start"),
+                             clip.get("in_frame"), clip.get("duration"),
+                             clip.get("track_num"))
+                if dedup_key in seen_video:
+                    continue
+                seen_video.add(dedup_key)
 
-                    created_snd = target_strips.new_sound(
-                        name=a_clip["name"],
-                        filepath=resolved_path,
-                        channel=snd_channel,
-                        frame_start=a_clip["start"]
-                    )
-                    created_snd.frame_offset_start = a_clip["in_frame"]
-                    
-                    FCPXMLImporter.apply_strip_retiming(
-                        created_snd,
-                        a_clip["start"],
-                        a_clip["duration"],
-                        a_clip.get("speed_factor", 1.0)
-                    )
+                resolved = media_resolver.resolve_media_path(clip["file_path"], clip["name"])
+                if not (resolved and os.path.isfile(resolved)):
+                    missing_files.append(clip["file_path"] or clip["name"])
+                    continue
 
-                    imported_clips_count += 1
-                else:
-                    missing_files.append(a_clip["file_path"] or a_clip["name"])
+                speed = clip.get("speed_factor", 1.0)
+                tl_dur = clip["duration"]
+                v_start = clip["start"]
+                c_in = clip["in_frame"]
+                is_reversed = speed < 0
 
-            # 2. Import Video Strip
-            if v_clip:
-                resolved_path = media_resolver.resolve_media_path(v_clip["file_path"], v_clip["name"])
-                if resolved_path and os.path.isfile(resolved_path):
-                    v_t_num = v_clip.get("track_num", 1)
-                    mov_channel = base_video_channel + video_track_map.get(v_t_num, 1)
+                mov = strips.new_movie(
+                    name=clip["name"],
+                    filepath=resolved,
+                    channel=v_ch,
+                    frame_start=v_start
+                )
 
-                    created_mov = target_strips.new_movie(
-                        name=v_clip["name"],
-                        filepath=resolved_path,
-                        channel=mov_channel,
-                        frame_start=v_clip["start"]
-                    )
-                    created_mov.frame_offset_start = v_clip["in_frame"]
-                    
-                    FCPXMLImporter.apply_strip_retiming(
-                        created_mov,
-                        v_clip["start"],
-                        v_clip["duration"],
-                        v_clip.get("speed_factor", 1.0)
-                    )
-                    
-                    imported_clips_count += 1
-                else:
-                    missing_files.append(v_clip["file_path"] or v_clip["name"])
+                c_out = clip.get("out_frame", -1)
+                source_dur = clip.get("file_duration", 0)
 
-            # Select associated video and audio strips together so moving one moves both
-            if created_mov:
-                created_mov.select = True
-            if created_snd:
-                created_snd.select = True
+                mov.content_trim_start = c_in
+                mov.frame_start = v_start
+                if c_out > c_in and source_dur > 0:
+                    mov.content_trim_end = max(0, source_dur - c_out)
 
-        # 3. Import Text Strips
-        for clip in text_clips:
-            text_channel = base_video_channel + video_t_count + 1
-            strip = strips.new_effect(
-                name=clip["name"],
-                type="TEXT",
-                channel=text_channel,
-                frame_start=clip["start"],
-                length=clip["duration"]
-            )
-            strip.text = clip["text_content"] or clip["name"]
-            strip.font_size = 30
-            imported_clips_count += 1
+                if is_reversed:
+                    mov.use_reverse_frames = True
+
+                mov.frame_final_duration = tl_dur
+                mov.select = True
+                imported_clips_count += 1
+
+        for track in tracks:
+            for clip in track.get("clips", []):
+                if clip.get("type") != "text":
+                    continue
+                strip = strips.new_effect(
+                    name=clip["name"],
+                    type="TEXT",
+                    channel=text_channel,
+                    frame_start=clip["start"],
+                    length=clip["duration"]
+                )
+                strip.text = clip["text_content"] or clip["name"]
+                strip.font_size = 30
+                imported_clips_count += 1
 
         return missing_files, imported_clips_count
 

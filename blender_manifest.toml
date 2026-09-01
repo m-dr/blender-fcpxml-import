@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "fcpxml_import"
+version = "1.2.0"
+name = "FCPXML & XMEML Importer"
+tagline = "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving multi-track structure, retiming, markers, audio and text"
+maintainer = "tintwotin, Omniscye, Antigravity, m-dr"
+type = "add-on"
+blender_version_min = "5.2.0"
+license = [
+  "SPDX:GPL-2.0-or-later",
+]
+tags = [
+  "Import-Export",
+  "Sequencer",
+]
+website = "https://github.com/m-dr/fcpxml_import"

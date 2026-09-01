@@ -1,41 +1,42 @@
-# FCPXML & XMEML Importer for Blender 5.2+
+# FCPXML & XMEML Importer (Blender 5.2+ Extension)
 
-An enhanced Blender add-on for importing **Final Cut Pro XML** (`.fcpxml`) and **Final Cut Pro 7 / Premiere Pro XML** (`.xmeml`) files into Blender's Video Sequence Editor (VSE).
+An enhanced Blender extension for importing **Final Cut Pro X XML** (`.fcpxml`) and **Final Cut Pro 7 / Premiere Pro XML** (`.xmeml`) files into Blender's Video Sequence Editor (VSE) with full multi-track layout, native retiming, reverse playback, markers, and audio pitch correction.
 
-Forked and merged from:
-- [tin2tin/fcpxml_import](https://github.com/tin2tin/fcpxml_import)
-- [Omniscye/fcpxml_import-Optimized](https://github.com/Omniscye/fcpxml_import-Optimized/tree/enhanced-fcpxml-importer)
+![Blender 5.2+](https://img.shields.io/badge/Blender-5.2%2B-orange.svg)
 
 ---
 
 ## Features
 
-- **Blender 5.2 / 4.x / 3.x Support**: Updated to support modern Blender VSE `scene.sequence_editor.strips` API with legacy fallback.
-- **Dual XML Format Parsing**: Supports both Final Cut Pro 7 / Premiere Pro XML (`<xmeml>`) and Final Cut Pro X XML (`<fcpxml>`).
-- **Timeline Markers**: Automatically imports sequence timeline markers directly into Blender's scene markers (`scene.timeline_markers`).
-- **Audio & Video Track Handling**: Creates `movie` strips for video clips and `sound` strips for audio clips with proper track/channel alignment.
-- **Reusable File ID Resolution**: Resolves `<file id="...">` references across XML tracks.
-- **Smart Path Decoding & Media Resolver**: Decodes URL-encoded paths (`file://localhost/E%3a/...`), strips URL schemes, and recursively matches filenames across custom search folders.
+- **Blender 5.2+ Native VSE Architecture**: Uses `scene.sequence_editor.strips`, `content_trim_start`, `content_trim_end`, and `frame_final_duration`.
+- **Multi-Track & Layered Alignment**: Preserves dedicated audio channels and video tracks.
+- **Native Retiming & Speed Factors**: Automatic speed calculation and reverse frame handling (`use_reverse_frames`).
+- **Timeline Markers**: Imports markers with names and comments directly into scene timeline markers.
+- **Smart Path Decoding & Media Resolver**: Decodes URL-encoded paths (`file://localhost/...`), handles absolute/relative paths, and fuzzy matches files in user-specified media search paths.
 
 ---
 
 ## Installation
 
-1. Download or zip the `fcpxml_import` folder.
-2. In Blender 5.2, go to **Edit > Preferences > Add-ons > Install...** (or **Extensions**).
-3. Select `fcpxml_import` and enable **FCPXML & XMEML Importer**.
+### Method A: Via Personal Extension Repository (Recommended)
+Add the extension repository in Blender:
+* **URL**: `https://m-dr.github.io/blender-extensions/index.json`  
+Then search for **FCPXML & XMEML Importer** in **Preferences > Get Extensions** and click **Install**.
+
+### Method B: Install from Disk (.zip)
+1. Download `fcpxml_import-1.2.0.zip` from the [Releases](https://github.com/m-dr/fcpxml_import/releases) page.
+2. In Blender: **Preferences > Get Extensions > Install from Disk...**
 
 ---
 
 ## Usage
 
-1. Open Blender 5.2 and switch to the **Video Editing** workspace.
+1. Switch to the **Video Editing** workspace.
 2. Go to **File > Import > FCPXML / XMEML (.xml)**.
-3. Select your `.xml` file (e.g. `Nanovex Scene Structure.xml`).
-4. Video strips, audio strips, and timeline markers will be populated into the Blender VSE.
+3. Select your `.xml` file and (optional) media search folder.
 
 ---
 
 ## License
 
-GPL-3.0 License
+GPL-3.0 License (see [LICENSE](LICENSE)).
