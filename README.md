@@ -24,7 +24,7 @@ Add the extension repository in Blender:
 Then search for **FCPXML & XMEML Importer** in **Preferences > Get Extensions** and click **Install**.
 
 ### Method B: Install from Disk (.zip)
-1. Download `fcpxml_import-1.2.0.zip` from the [Releases](https://github.com/m-dr/fcpxml_import/releases) page.
+1. Download `fcpxml_import-1.2.0.zip` from the [Releases](https://github.com/m-dr/blender-fcpxml-import/releases) page.
 2. In Blender: **Preferences > Get Extensions > Install from Disk...**
 
 ---
