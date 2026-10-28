@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "fcpxml_import"
 version = "1.2.0"
-name = "FCPXML & XMEML Importer"
+name = "FCPXML & XMEML Importer (DEV)"
 tagline = "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving multi-track structure, retiming, markers, audio and text"
 maintainer = "tintwotin, Omniscye, Antigravity, m-dr"
 type = "add-on"

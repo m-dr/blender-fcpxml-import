@@ -6,7 +6,7 @@ import logging
 from typing import List, Dict, Any, Tuple, Optional
 
 bl_info = {
-    "name": "FCPXML & XMEML Importer",
+    "name": "FCPXML & XMEML Importer (DEV)",
     "author": "tintwotin, Omniscye, Antigravity",
     "version": (1, 2, 0),
     "blender": (5, 2, 0),

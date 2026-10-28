@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Build compliant Blender 5.2+ extension .zip package.
+Build compliant Blender extension .zip package with automatic release sanitization.
+Strips '(DEV)' from blender_manifest.toml and bl_info when packing production archives.
 """
 import hashlib
 import json
 import os
+import re
 import tomllib
 import zipfile
 
@@ -12,7 +14,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DIST_DIR = os.path.join(REPO_ROOT, "dist")
 MANIFEST_PATH = os.path.join(REPO_ROOT, "blender_manifest.toml")
 
-INCLUDE_EXTENSIONS = {".py", ".toml", ".txt", ".md", ".json", ".png", ".svg", ".xml"}
+INCLUDE_EXTENSIONS = {".py", ".toml", ".txt", ".md", ".json", ".png", ".svg"}
 EXCLUDE_DIRS = {"scripts", "dist", "build", ".git", "__pycache__", ".github"}
 EXCLUDE_FILES = {"AGENTS.md", "README.md", ".gitignore"}
 
@@ -25,6 +27,16 @@ def sha256_file(filepath):
     return "sha256:" + h.hexdigest()
 
 
+def sanitize_manifest_text(text: str) -> str:
+    """Strip (DEV) suffix from manifest name for production releases."""
+    return re.sub(r'(name\s*=\s*"[^"]*?)\s*[\(\[]DEV[\)\]]', r'\1', text)
+
+
+def sanitize_init_text(text: str) -> str:
+    """Strip (DEV) suffix from bl_info name for production releases."""
+    return re.sub(r'("name":\s*"[^"]*?)\s*[\(\[]DEV[\)\]]', r'\1', text)
+
+
 def main():
     if not os.path.exists(MANIFEST_PATH):
         raise FileNotFoundError(f"Missing manifest: {MANIFEST_PATH}")
@@ -34,8 +46,10 @@ def main():
 
     ext_id = manifest["id"]
     version = manifest["version"]
-    os.makedirs(DIST_DIR, exist_ok=True)
+    raw_name = manifest.get("name", ext_id)
+    clean_name = re.sub(r'\s*[\(\[]DEV[\)\]]', '', raw_name).strip()
 
+    os.makedirs(DIST_DIR, exist_ok=True)
     zip_filename = f"{ext_id}-{version}.zip"
     zip_path = os.path.join(DIST_DIR, zip_filename)
 
@@ -47,9 +61,18 @@ def main():
                 if file in EXCLUDE_FILES or file.startswith("."):
                     continue
                 _, ext = os.path.splitext(file)
-                if ext.lower() in INCLUDE_EXTENSIONS or file in {"LICENSE", "blender_manifest.toml"}:
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, REPO_ROOT)
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, REPO_ROOT)
+
+                if file == "blender_manifest.toml" and rel_path == "blender_manifest.toml":
+                    with open(full_path, "r", encoding="utf-8") as f_in:
+                        content = sanitize_manifest_text(f_in.read())
+                    z.writestr("blender_manifest.toml", content.encode("utf-8"))
+                elif file == "__init__.py" and rel_path == "__init__.py":
+                    with open(full_path, "r", encoding="utf-8") as f_in:
+                        content = sanitize_init_text(f_in.read())
+                    z.writestr("__init__.py", content.encode("utf-8"))
+                elif ext.lower() in INCLUDE_EXTENSIONS or file in {"LICENSE"}:
                     z.write(full_path, arcname=rel_path)
 
     file_size = os.path.getsize(zip_path)
@@ -61,7 +84,7 @@ def main():
 
     index_entry = {
         "id": ext_id,
-        "name": manifest.get("name", ext_id),
+        "name": clean_name,
         "version": version,
         "type": manifest.get("type", "add-on"),
         "blender_version_min": manifest.get("blender_version_min", "5.2.0"),
