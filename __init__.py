@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple, Optional
 bl_info = {
     "name": "FCPXML & XMEML Importer (DEV)",
     "author": "tintwotin, Omniscye, Antigravity",
-    "version": (1, 2, 0),
+    "version": (1, 2, 1),
     "blender": (5, 2, 0),
     "location": "File > Import > FCPXML / XMEML (.xml)",
     "description": "Imports FCP7 XML (.xmeml) and FCPX XML (.fcpxml) files preserving multi-track structure, retiming, reverse playback, markers, video, audio, and text.",
